@@ -1,0 +1,489 @@
+
+
+                ;-----------------------------------------------------------------------
+                ; FUJIDIR.COM v1.0 -- list a directory through FujiNet's N: network device.
+                ;
+                ;       FUJIDIR N:<url>         e.g.  FUJIDIR N1:TNFS://192.168.1.5/
+                ;
+                ; Opens <url> in FujiNet's DIRECTORY access mode (not read/write -- see
+                ; below) and prints what comes back: one name per line, subdirectories
+                ; marked with a trailing '/'.
+                ;
+                ;-----------------------------------------------------------------------
+                ; THIS IS NOT THE FUJI-DEVICE HOST-SLOT BROWSER (OPEN_DIRECTORY/
+                ; READ_DIR_ENTRY/CLOSE_DIRECTORY, $F7/$F6/$F5), which needs a host
+                ; pre-mounted via CONFIG and was the frontier this project flagged as
+                ; unresolved. It turns out that's the wrong mechanism entirely: reading
+                ; the public fujinet-firmware source (lib/network-protocol/FS.cpp,
+                ; NetworkProtocolFS::open()) shows the ORDINARY N: OPEN ($4F) dispatches
+                ; to a directory listing when the ACCESS MODE byte is DIRECTORY ($06,
+                ; not READ's $04/WRITE's $08/READWRITE's $0C -- see Protocol.h's
+                ; ACCESS_MODE enum), and the TRANSLATION byte doubles as a listing
+                ; FORMAT selector in that case (dirFormat_t, also in FS.h) -- $83 selects
+                ; RAW: exact filenames only, one per line, CRLF-terminated, directories
+                ; suffixed '/'. status_dir() sets connected=(bytes left in the listing
+                ; > 0), so the exact same STATUS/READ/EOF shape FUJIGET.COM already uses
+                ; applies here unchanged. So this program is really FUJIGET's transport
+                ; skeleton with the FCB/record machinery deleted and the received bytes
+                ; printed instead of filed -- see FUJIGET.ASM's header for the shared
+                ; SLIP/FujiBus code this copies from.
+                ;-----------------------------------------------------------------------
+                ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
+                ;-----------------------------------------------------------------------
+                ; Assemble it INSIDE the machine:
+                ;
+                ;       ASM FUJIDIR             -> FUJIDIR.HEX
+                ;       LOAD FUJIDIR            -> FUJIDIR.COM
+                ;-----------------------------------------------------------------------
+                
+ 0100                   ORG     100H
+                
+                ;---- CP/M ---------------------------------------------------------------
+ 0005 =         BDOS    EQU     0005H
+ 0080 =         TAIL    EQU     0080H
+                
+ 0002 =         CONOUT  EQU     2
+ 0006 =         DIRIO   EQU     6
+ 0009 =         PRSTR   EQU     9
+                
+ 000D =         CR      EQU     0DH
+ 000A =         LF      EQU     0AH
+ 0003 =         CTRLC   EQU     03H
+                
+                ;---- The 2SIO card, unit b ---------------------------------------------
+ 0012 =         SIOST   EQU     12H
+ 0013 =         SIODT   EQU     13H
+ 0003 =         SIORST  EQU     03H
+ 0015 =         SIOCTL  EQU     15H
+                
+                ;---- The FujiNet RS232 wire protocol (Reference/fujinet/rs232-protocol.md)
+ 0071 =         NETDEV  EQU     71H
+ 004F =         CMDOPEN EQU     4FH
+ 0043 =         CMDCLOS EQU     43H
+ 0052 =         CMDREAD EQU     52H
+ 0053 =         CMDSTAT EQU     53H
+ 0006 =         ACKCMD  EQU     06H
+                
+ 0006 =         ACCDIR  EQU     06H             ; access mode: DIRECTORY, not read or write
+ 0083 =         DIRFRAW EQU     83H             ; "translation" byte, repurposed as format:
+                                                ; DIR_FORMAT::RAW -- filenames only, '/' on
+                                                ; directories, CRLF-separated
+                
+ 00C0 =         SLPEND  EQU     0C0H
+ 00DB =         SLPESC  EQU     0DBH
+ 00DC =         SLPEEND EQU     0DCH
+ 00DD =         SLPEESC EQU     0DDH
+                
+ 0080 =         RDMAX   EQU     128             ; largest READ this program ever asks for
+ 0064 =         SPECLEN EQU     100             ; room for SPEC, including the NUL
+                
+                ;=======================================================================
+                ; MAIN
+                ;=======================================================================
+ 0100 31A706    START:  LXI     SP,STACK
+                
+ 0103 CD0003            CALL    PARSE           ; tail -> SPEC (the url)
+ 0106 3A7004            LDA     SPEC
+ 0109 B7                ORA     A
+ 010A CA7603            JZ      USAGE
+                
+ 010D 3E03              MVI     A,SIORST
+ 010F D312              OUT     SIOST
+ 0111 3E15              MVI     A,SIOCTL
+ 0113 D312              OUT     SIOST
+                
+ 0115 CD4803            CALL    SAYCONN
+                
+ 0118 CDD201            CALL    MKOPEN
+ 011B CD7202            CALL    SENDPK
+ 011E CDB902            CALL    RECVPK
+ 0121 3AA005            LDA     RXBUF+1
+ 0124 FE06              CPI     ACKCMD
+ 0126 C2CC01            JNZ     EFAIL
+                
+ 0129 AF                XRA     A
+ 012A 32D604            STA     ANYOUT          ; nothing printed yet
+                
+                ;-----------------------------------------------------------------------
+                ; DLOOP -- poll for a Ctrl-C abort, then ask STATUS. If FujiNet has bytes
+                ; waiting, READ up to RDMAX and print them straight to the console --
+                ; RAW format is already plain CRLF-terminated text, nothing to parse.
+                ; connected=0 with nothing waiting is a clean end of the listing.
+                ;-----------------------------------------------------------------------
+ 012D 1EFF      DLOOP:  MVI     E,0FFH
+ 012F 0E06              MVI     C,DIRIO
+ 0131 CD0500            CALL    BDOS
+ 0134 B7                ORA     A
+ 0135 CA3D01            JZ      DPOLL
+ 0138 FE03              CPI     CTRLC
+ 013A CABD01            JZ      ABORT
+                
+ 013D CD1702    DPOLL:  CALL    MKSTAT
+ 0140 CD7202            CALL    SENDPK
+ 0143 CDB902            CALL    RECVPK
+                
+ 0146 3AA505            LDA     RXBUF+6         ; bytes_waiting, lo
+ 0149 57                MOV     D,A
+ 014A 3AA605            LDA     RXBUF+7         ; bytes_waiting, hi
+ 014D B2                ORA     D
+ 014E C25B01            JNZ     DGOT
+                
+ 0151 3AA705            LDA     RXBUF+8         ; connected
+ 0154 B7                ORA     A
+ 0155 C22D01            JNZ     DLOOP           ; still open, nothing waiting yet
+ 0158 C3A701            JMP     DDONE           ; connected=0, nothing waiting: the listing is over
+                
+                ;---- REQLEN = min(bytes_waiting, RDMAX) --------------------------------
+ 015B 3AA605    DGOT:   LDA     RXBUF+7
+ 015E B7                ORA     A
+ 015F C27401            JNZ     DQMAX           ; bw >= 256, certainly > RDMAX
+                
+ 0162 3AA505            LDA     RXBUF+6
+ 0165 FE81              CPI     RDMAX+1
+ 0167 D27401            JNC     DQMAX           ; bw >= RDMAX+1 -> clamp
+ 016A 32D404            STA     REQLEN          ; else A (bw lo) is already <= RDMAX
+ 016D AF                XRA     A
+ 016E 32D504            STA     REQLEN+1
+ 0171 C37D01            JMP     DGO
+ 0174 3E80      DQMAX:  MVI     A,RDMAX
+ 0176 32D404            STA     REQLEN
+ 0179 AF                XRA     A
+ 017A 32D504            STA     REQLEN+1
+                
+ 017D CDF801    DGO:    CALL    MKREAD
+ 0180 CD7202            CALL    SENDPK
+ 0183 CDB902            CALL    RECVPK
+                
+ 0186 3E01              MVI     A,1
+ 0188 32D604            STA     ANYOUT
+                
+ 018B 21A505            LXI     H,RXBUF+6
+ 018E 3AD404            LDA     REQLEN          ; REQLEN's hi byte is always 0 (RDMAX<256)
+ 0191 47                MOV     B,A
+ 0192 78        DPRINT: MOV     A,B
+ 0193 B7                ORA     A
+ 0194 CA2D01            JZ      DLOOP
+ 0197 7E                MOV     A,M
+ 0198 5F                MOV     E,A
+ 0199 0E06              MVI     C,DIRIO
+ 019B E5                PUSH    H
+ 019C C5                PUSH    B
+ 019D CD0500            CALL    BDOS
+ 01A0 C1                POP     B
+ 01A1 E1                POP     H
+ 01A2 23                INX     H
+ 01A3 05                DCR     B
+ 01A4 C39201            JMP     DPRINT
+                
+                ;-----------------------------------------------------------------------
+                ; DDONE -- close, note if nothing at all came back, and exit.
+                ;-----------------------------------------------------------------------
+ 01A7 CD2C02    DDONE:  CALL    MKCLOSE
+ 01AA CD7202            CALL    SENDPK
+ 01AD CDB902            CALL    RECVPK
+                
+ 01B0 3AD604            LDA     ANYOUT
+ 01B3 B7                ORA     A
+ 01B4 C2BA01            JNZ     EXIT0
+ 01B7 CD6E03            CALL    SAYNONE
+                
+ 01BA C30000    EXIT0:  JMP     0
+                
+ 01BD CD2C02    ABORT:  CALL    MKCLOSE
+ 01C0 CD7202            CALL    SENDPK
+ 01C3 CDB902            CALL    RECVPK
+ 01C6 CD6603            CALL    SAYABRT
+ 01C9 C30000            JMP     0
+                
+ 01CC CD5E03    EFAIL:  CALL    SAYFAIL
+ 01CF C30000            JMP     0
+                
+                ;=======================================================================
+                ; BUILDING PACKETS -- see Reference/fujinet/rs232-protocol.md; identical
+                ; shape to CPM Tools/NC.ASM's/FUJIGET.ASM's MKxxx routines.
+                ;=======================================================================
+                
+ 01D2 21D704    MKOPEN: LXI     H,TXBUF
+ 01D5 3671              MVI     M,NETDEV
+ 01D7 23                INX     H
+ 01D8 364F              MVI     M,CMDOPEN
+ 01DA 23                INX     H
+ 01DB 23                INX     H
+ 01DC 23                INX     H
+ 01DD 23                INX     H
+ 01DE 3602              MVI     M,2             ; descr: two 1-byte params
+ 01E0 23                INX     H
+ 01E1 3606              MVI     M,ACCDIR
+ 01E3 23                INX     H
+ 01E4 3683              MVI     M,DIRFRAW
+ 01E6 23                INX     H
+ 01E7 117004            LXI     D,SPEC
+ 01EA 1A        MKO1:   LDAX    D
+ 01EB 77                MOV     M,A
+ 01EC 23                INX     H
+ 01ED 13                INX     D
+ 01EE B7                ORA     A
+ 01EF C2EA01            JNZ     MKO1
+ 01F2 11D704            LXI     D,TXBUF
+ 01F5 C34102            JMP     SETLEN
+                
+ 01F8 21D704    MKREAD: LXI     H,TXBUF
+ 01FB 3671              MVI     M,NETDEV
+ 01FD 23                INX     H
+ 01FE 3652              MVI     M,CMDREAD
+ 0200 23                INX     H
+ 0201 23                INX     H
+ 0202 23                INX     H
+ 0203 23                INX     H
+ 0204 3605              MVI     M,5             ; descr: one 2-byte param
+ 0206 23                INX     H
+ 0207 3AD404            LDA     REQLEN
+ 020A 77                MOV     M,A
+ 020B 23                INX     H
+ 020C 3AD504            LDA     REQLEN+1
+ 020F 77                MOV     M,A
+ 0210 23                INX     H
+ 0211 11D704            LXI     D,TXBUF
+ 0214 C34102            JMP     SETLEN
+                
+ 0217 21D704    MKSTAT: LXI     H,TXBUF
+ 021A 3671              MVI     M,NETDEV
+ 021C 23                INX     H
+ 021D 3653              MVI     M,CMDSTAT
+ 021F 23                INX     H
+ 0220 23                INX     H
+ 0221 23                INX     H
+ 0222 23                INX     H
+ 0223 3600              MVI     M,0
+ 0225 23                INX     H
+ 0226 11D704            LXI     D,TXBUF
+ 0229 C34102            JMP     SETLEN
+                
+ 022C 21D704    MKCLOSE:LXI     H,TXBUF
+ 022F 3671              MVI     M,NETDEV
+ 0231 23                INX     H
+ 0232 3643              MVI     M,CMDCLOS
+ 0234 23                INX     H
+ 0235 23                INX     H
+ 0236 23                INX     H
+ 0237 23                INX     H
+ 0238 3600              MVI     M,0
+ 023A 23                INX     H
+ 023B 11D704            LXI     D,TXBUF
+ 023E C34102            JMP     SETLEN
+                
+                ;-----------------------------------------------------------------------
+                ; SETLEN -- HL = one past the last byte written, DE = TXBUF's start.
+                ;-----------------------------------------------------------------------
+ 0241 7D        SETLEN: MOV     A,L
+ 0242 93                SUB     E
+ 0243 4F                MOV     C,A
+ 0244 7C                MOV     A,H
+ 0245 9A                SBB     D
+ 0246 47                MOV     B,A
+ 0247 79                MOV     A,C
+ 0248 32D904            STA     TXBUF+2
+ 024B 78                MOV     A,B
+ 024C 32DA04            STA     TXBUF+3
+ 024F AF                XRA     A
+ 0250 32DB04            STA     TXBUF+4
+ 0253 21D704            LXI     H,TXBUF
+ 0256 CD5D02            CALL    CKSUM
+ 0259 32DB04            STA     TXBUF+4
+ 025C C9                RET
+                
+ 025D 1600      CKSUM:  MVI     D,0
+ 025F 78        CK1:    MOV     A,B
+ 0260 B1                ORA     C
+ 0261 CA7002            JZ      CK9
+ 0264 7A                MOV     A,D
+ 0265 86                ADD     M
+ 0266 D26A02            JNC     CK2
+ 0269 3C                INR     A
+ 026A 57        CK2:    MOV     D,A
+ 026B 23                INX     H
+ 026C 0B                DCX     B
+ 026D C35F02            JMP     CK1
+ 0270 7A        CK9:    MOV     A,D
+ 0271 C9                RET
+                
+                ;=======================================================================
+                ; SENDING AND RECEIVING -- SLIP framing (verbatim from CPM Tools/NC.ASM)
+                ;=======================================================================
+ 0272 3AD904    SENDPK: LDA     TXBUF+2
+ 0275 4F                MOV     C,A
+ 0276 3ADA04            LDA     TXBUF+3
+ 0279 47                MOV     B,A
+ 027A 21D704            LXI     H,TXBUF
+ 027D 3EC0              MVI     A,SLPEND
+ 027F CDEA02            CALL    ACOUT
+ 0282 78        SP1:    MOV     A,B
+ 0283 B1                ORA     C
+ 0284 CAB402            JZ      SP9
+ 0287 7E                MOV     A,M
+ 0288 FEC0              CPI     SLPEND
+ 028A CA9802            JZ      SPQEND
+ 028D FEDB              CPI     SLPESC
+ 028F CAA502            JZ      SPQESC
+ 0292 CDEA02            CALL    ACOUT
+ 0295 C3AF02            JMP     SPADV
+ 0298 3EDB      SPQEND: MVI     A,SLPESC
+ 029A CDEA02            CALL    ACOUT
+ 029D 3EDC              MVI     A,SLPEEND
+ 029F CDEA02            CALL    ACOUT
+ 02A2 C3AF02            JMP     SPADV
+ 02A5 3EDB      SPQESC: MVI     A,SLPESC
+ 02A7 CDEA02            CALL    ACOUT
+ 02AA 3EDD              MVI     A,SLPEESC
+ 02AC CDEA02            CALL    ACOUT
+ 02AF 23        SPADV:  INX     H
+ 02B0 0B                DCX     B
+ 02B1 C38202            JMP     SP1
+ 02B4 3EC0      SP9:    MVI     A,SLPEND
+ 02B6 C3EA02            JMP     ACOUT
+                
+ 02B9 CDF602    RECVPK: CALL    ACIN
+ 02BC FEC0              CPI     SLPEND
+ 02BE C2B902            JNZ     RECVPK
+ 02C1 219F05            LXI     H,RXBUF
+ 02C4 010000            LXI     B,0
+ 02C7 CDF602    RP1:    CALL    ACIN
+ 02CA FEC0              CPI     SLPEND
+ 02CC CAE902            JZ      RP9
+ 02CF FEDB              CPI     SLPESC
+ 02D1 C2E302            JNZ     RP3
+ 02D4 CDF602            CALL    ACIN
+ 02D7 FEDC              CPI     SLPEEND
+ 02D9 CAE102            JZ      RPQEND
+ 02DC 3EDB              MVI     A,SLPESC
+ 02DE C3E302            JMP     RP3
+ 02E1 3EC0      RPQEND: MVI     A,SLPEND
+ 02E3 77        RP3:    MOV     M,A
+ 02E4 23                INX     H
+ 02E5 03                INX     B
+ 02E6 C3C702            JMP     RP1
+ 02E9 C9        RP9:    RET
+                
+ 02EA F5        ACOUT:  PUSH    PSW
+ 02EB DB12      AO1:    IN      SIOST
+ 02ED E602              ANI     02H
+ 02EF CAEB02            JZ      AO1
+ 02F2 F1                POP     PSW
+ 02F3 D313              OUT     SIODT
+ 02F5 C9                RET
+                
+ 02F6 DB12      ACIN:   IN      SIOST
+ 02F8 E601              ANI     01H
+ 02FA CAF602            JZ      ACIN
+ 02FD DB13              IN      SIODT
+ 02FF C9                RET
+                
+                ;=======================================================================
+                ; THE COMMAND TAIL -- one word, hand-parsed (a URL is not an 8.3 name).
+                ; TOKEN bounded by a room count, same as FUJIGET.ASM's (HDIR.ASM's shape).
+                ;=======================================================================
+ 0300 218000    PARSE:  LXI     H,TAIL
+ 0303 46                MOV     B,M
+ 0304 23                INX     H
+ 0305 CD1103            CALL    SKIPSP
+ 0308 117004            LXI     D,SPEC
+ 030B 0E64              MVI     C,SPECLEN
+ 030D CD1D03            CALL    TOKEN
+ 0310 C9                RET
+                
+ 0311 78        SKIPSP: MOV     A,B
+ 0312 B7                ORA     A
+ 0313 C8                RZ
+ 0314 7E                MOV     A,M
+ 0315 FE20              CPI     ' '
+ 0317 C0                RNZ
+ 0318 23                INX     H
+ 0319 05                DCR     B
+ 031A C31103            JMP     SKIPSP
+                
+ 031D 79        TOKEN:  MOV     A,C
+ 031E FE01              CPI     1
+ 0320 CA3603            JZ      TOKEND
+ 0323 78                MOV     A,B
+ 0324 B7                ORA     A
+ 0325 CA3603            JZ      TOKEND
+ 0328 7E                MOV     A,M
+ 0329 FE20              CPI     ' '
+ 032B CA3603            JZ      TOKEND
+ 032E 12                STAX    D
+ 032F 23                INX     H
+ 0330 13                INX     D
+ 0331 05                DCR     B
+ 0332 0D                DCR     C
+ 0333 C31D03            JMP     TOKEN
+ 0336 AF        TOKEND: XRA     A
+ 0337 12                STAX    D
+ 0338 C9                RET
+                
+                ;=======================================================================
+                ; TALKING TO THE USER
+                ;=======================================================================
+ 0339 7E        PSTR:   MOV     A,M
+ 033A B7                ORA     A
+ 033B C8                RZ
+ 033C E5                PUSH    H
+ 033D 5F                MOV     E,A
+ 033E 0E02              MVI     C,CONOUT
+ 0340 CD0500            CALL    BDOS
+ 0343 E1                POP     H
+ 0344 23                INX     H
+ 0345 C33903            JMP     PSTR
+                
+ 0348 118103    SAYCONN:LXI     D,MCONN
+ 034B 0E09              MVI     C,PRSTR
+ 034D CD0500            CALL    BDOS
+ 0350 217004            LXI     H,SPEC
+ 0353 CD3903            CALL    PSTR
+ 0356 119303            LXI     D,MCRLF
+ 0359 0E09              MVI     C,PRSTR
+ 035B C30500            JMP     BDOS
+                
+ 035E 119603    SAYFAIL:LXI     D,MFAIL
+ 0361 0E09              MVI     C,PRSTR
+ 0363 C30500            JMP     BDOS
+                
+ 0366 11B003    SAYABRT:LXI     D,MABRT
+ 0369 0E09              MVI     C,PRSTR
+ 036B C30500            JMP     BDOS
+                
+ 036E 11C603    SAYNONE:LXI     D,MNONE
+ 0371 0E09              MVI     C,PRSTR
+ 0373 C30500            JMP     BDOS
+                
+ 0376 11E203    USAGE:  LXI     D,MUSAGE
+ 0379 0E09              MVI     C,PRSTR
+ 037B CD0500            CALL    BDOS
+ 037E C30000            JMP     0
+                
+                ;=======================================================================
+                ; DATA
+                ;=======================================================================
+ 0381 46554A4944MCONN:  DB      'FUJIDIR: listing $'
+ 0393 0D0A24    MCRLF:  DB      CR,LF,'$'
+ 0396 0D0A46554AMFAIL:  DB      CR,LF,'FUJIDIR: open failed.',CR,LF,'$'
+ 03B0 0D0A46554AMABRT:  DB      CR,LF,'FUJIDIR: aborted.',CR,LF,'$'
+ 03C6 46554A4944MNONE:  DB      'FUJIDIR: nothing matches.',CR,LF,'$'
+                
+ 03E2 0D0A46554AMUSAGE: DB      CR,LF,'FUJIDIR v1.0 -- list a directory through FujiNet''s'
+ 0416 204E3A206E        DB      ' N: network device.',CR,LF,CR,LF
+ 042D 2020204655        DB      '   FUJIDIR N:<url>',CR,LF,CR,LF
+ 0443 4578616D70        DB      'Example',CR,LF
+ 044C 2020204655        DB      '   FUJIDIR N1:TNFS://192.168.1.5/',CR,LF,'$'
+                
+                ;---- Variables ---------------------------------------------------------
+ 0470           SPEC:   DS      SPECLEN
+ 04D4           REQLEN: DS      2
+ 04D6           ANYOUT: DS      1
+                
+ 04D7           TXBUF:  DS      200
+ 059F           RXBUF:  DS      200
+                
+ 0667                   DS      64              ; stack
+ 06A7 =         STACK   EQU     $
+                
+ 06A7                   END     START

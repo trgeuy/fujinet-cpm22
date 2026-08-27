@@ -1,0 +1,825 @@
+
+
+                ;-----------------------------------------------------------------------
+                ; FUJIGET.COM v1.0 -- fetch a file through FujiNet's N: network device.
+                ;
+                ;       FUJIGET N:<url> file.ext        e.g.  FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
+                ;
+                ; Opens <url> for read on FujiNet's N: device, streams the bytes into a
+                ; new CP/M file, closes both sides. The Nx: prefix and scheme (TCP://,
+                ; TNFS://, HTTP://, ...) are typed by the caller as part of the URL --
+                ; this program does not synthesize or assume one, unlike NC.COM (which
+                ; always builds a TCP:// spec itself).
+                ;
+                ; This is "PCGET's file-I/O skeleton wearing NC.COM's transport instead
+                ; of XMODEM's" -- see Reference/pcget-pcput/README.md for that lineage,
+                ; and Reference/fujinet/rs232-protocol.md for the wire protocol this
+                ; implements (SLIP-framed FujiBusPackets). The SLIP/packet-building code
+                ; below is copied from CPM Tools/NC.ASM nearly verbatim; the FCB/MKFCB
+                ; machinery is copied from CPM Tools/R.ASM nearly verbatim. Assemble it
+                ; INSIDE the machine:
+                ;
+                ;       ASM FUJIGET             -> FUJIGET.HEX
+                ;       LOAD FUJIGET            -> FUJIGET.COM
+                ;
+                ;-----------------------------------------------------------------------
+                ; ORDER IS LOAD-BEARING: OPEN THE NETWORK SIDE BEFORE TOUCHING THE FILE.
+                ;
+                ; Exactly R.ASM's own reasoning (see its comment above FDELET/FMAKE):
+                ; opening a URL that doesn't exist must not delete/replace a CP/M file of
+                ; the same name first. Fail first, destroy nothing.
+                ;
+                ; If NAME already exists, CKEXIST asks "Replace? (Y/N)" before any of
+                ; that -- SEARCH FIRST only reads the directory, so checking costs
+                ; nothing and can happen before the network side is even opened.
+                ;
+                ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
+                ; Nothing may be left live in a register across CALL BDOS.
+                ;-----------------------------------------------------------------------
+                
+ 0100                   ORG     100H
+                
+                ;---- CP/M ---------------------------------------------------------------
+ 0005 =         BDOS    EQU     0005H
+ 0080 =         TAIL    EQU     0080H           ; the command tail: length, then the text
+                
+ 0002 =         CONOUT  EQU     2               ; E = char
+ 0006 =         DIRIO   EQU     6               ; direct console I/O: E=0FFH polls input
+ 0009 =         PRSTR   EQU     9               ; DE = string, '$'-terminated
+                
+ 0010 =         FCLOSE  EQU     16
+ 0013 =         FDELET  EQU     19
+ 0015 =         FWRITE  EQU     21              ; write sequential
+ 0016 =         FMAKE   EQU     22
+ 001A =         FSETDMA EQU     26
+ 0001 =         RDCON   EQU     1               ; console input, echoed
+ 0011 =         SFIRST  EQU     17              ; search first -- read-only, doesn't touch the dir
+                
+ 000D =         CR      EQU     0DH
+ 000A =         LF      EQU     0AH
+ 0003 =         CTRLC   EQU     03H
+ 001A =         CPMEOF  EQU     1AH             ; ^Z -- pads the last, partial record
+                
+ 0080 =         RECLEN  EQU     128             ; a CP/M record
+                
+                ;---- The 2SIO card, unit b (see Reference/manual/ref/boards.md) --------
+ 0012 =         SIOST   EQU     12H
+ 0013 =         SIODT   EQU     13H
+ 0003 =         SIORST  EQU     03H
+ 0015 =         SIOCTL  EQU     15H
+                
+                ;---- The FujiNet RS232 wire protocol (Reference/fujinet/rs232-protocol.md)
+ 0071 =         NETDEV  EQU     71H
+ 004F =         CMDOPEN EQU     4FH
+ 0043 =         CMDCLOS EQU     43H
+ 0052 =         CMDREAD EQU     52H
+ 0053 =         CMDSTAT EQU     53H
+ 0006 =         ACKCMD  EQU     06H
+                
+ 0004 =         ACCRD   EQU     04H             ; access mode: read only
+ 0000 =         TRANONE EQU     00H             ; translation: none (binary)
+                
+ 00C0 =         SLPEND  EQU     0C0H
+ 00DB =         SLPESC  EQU     0DBH
+ 00DC =         SLPEEND EQU     0DCH
+ 00DD =         SLPEESC EQU     0DDH
+                
+ 0064 =         SPECLEN EQU     100             ; room for SPEC, including the NUL
+ 0014 =         NAMLEN  EQU     20              ; room for NAME, including the NUL
+                
+                ;=======================================================================
+                ; MAIN
+                ;=======================================================================
+ 0100 31320A    START:  LXI     SP,STACK
+                
+ 0103 CDE303            CALL    PARSE           ; tail -> SPEC (the url), NAME (the filename)
+ 0106 3A4007            LDA     SPEC
+ 0109 B7                ORA     A
+ 010A CA5D05            JZ      USAGE
+ 010D 3AA407            LDA     NAME
+ 0110 B7                ORA     A
+ 0111 CA5D05            JZ      USAGE
+                
+ 0114 21A407            LXI     H,NAME
+ 0117 CD2704            CALL    MKFCB           ; NAME -> FCB (ours, not the CCP's at 5CH)
+                
+ 011A CD7C02            CALL    CKEXIST         ; ask before clobbering an existing file
+                
+ 011D 3E03              MVI     A,SIORST        ; the ACIA out of reset...
+ 011F D312              OUT     SIOST
+ 0121 3E15              MVI     A,SIOCTL        ; ...and into a real operating mode
+ 0123 D312              OUT     SIOST
+                
+ 0125 CDC204            CALL    SAYCONN
+                
+ 0128 CDB502            CALL    MKOPEN
+ 012B CD5503            CALL    SENDPK
+ 012E CD9C03            CALL    RECVPK
+ 0131 3A2A09            LDA     RXBUF+1
+ 0134 FE06              CPI     ACKCMD
+ 0136 C25B02            JNZ     EFAIL
+                
+ 0139 CDD804            CALL    SAYOK
+                
+                ;---- Only now touch the CP/M file -- the network side is proven open ---
+ 013C 11B807            LXI     D,FCB
+ 013F 0E13              MVI     C,FDELET
+ 0141 CD0500            CALL    BDOS            ; 0FFH = there wasn't one, fine
+                
+ 0144 11B807            LXI     D,FCB
+ 0147 0E16              MVI     C,FMAKE
+ 0149 CD0500            CALL    BDOS
+ 014C FEFF              CPI     0FFH
+ 014E CA6102            JZ      ENODIR          ; directory full
+                
+ 0151 11DC07            LXI     D,BUF
+ 0154 0E1A              MVI     C,FSETDMA
+ 0156 CD0500            CALL    BDOS            ; where BDOS reads/writes each record
+                
+ 0159 AF                XRA     A
+ 015A 325C08            STA     RECPOS          ; nothing buffered yet
+ 015D 210000            LXI     H,0
+ 0160 225D08            SHLD    RECS
+                
+                ;-----------------------------------------------------------------------
+                ; RLOOP -- poll for a Ctrl-C abort, then ask STATUS. If FujiNet has bytes
+                ; waiting, READ up to however much room is left in the current 128-byte
+                ; record and copy it in; when a record fills, write it. Connected=0 with
+                ; nothing waiting is a clean end of file, not an error.
+                ;-----------------------------------------------------------------------
+ 0163 1EFF      RLOOP:  MVI     E,0FFH
+ 0165 0E06              MVI     C,DIRIO
+ 0167 CD0500            CALL    BDOS
+ 016A B7                ORA     A
+ 016B CA7301            JZ      RPOLL
+ 016E FE03              CPI     CTRLC
+ 0170 CA4402            JZ      ABORT
+                
+ 0173 CDFA02    RPOLL:  CALL    MKSTAT
+ 0176 CD5503            CALL    SENDPK
+ 0179 CD9C03            CALL    RECVPK
+                
+ 017C 3A2F09            LDA     RXBUF+6         ; bytes_waiting, lo
+ 017F 57                MOV     D,A
+ 0180 3A3009            LDA     RXBUF+7         ; bytes_waiting, hi
+ 0183 B2                ORA     D
+ 0184 C29101            JNZ     RGOT            ; something waiting -- go read it
+                
+ 0187 3A3109            LDA     RXBUF+8         ; connected
+ 018A B7                ORA     A
+ 018B C26301            JNZ     RLOOP           ; still connected, nothing waiting yet
+ 018E C3F001            JMP     RDONE           ; connected=0, nothing waiting: real EOF
+                
+                ;---- REQLEN = min(bytes_waiting, room left in the current record) -----
+ 0191 3A5C08    RGOT:   LDA     RECPOS
+ 0194 4F                MOV     C,A
+ 0195 3E80              MVI     A,RECLEN
+ 0197 91                SUB     C
+ 0198 4F                MOV     C,A             ; C = room left (1..128 -- RECPOS<128 always here)
+                
+ 0199 3A3009            LDA     RXBUF+7         ; bw hi
+ 019C B7                ORA     A
+ 019D C2B001            JNZ     RQROOM          ; bw >= 256, certainly > room
+                
+ 01A0 3A2F09            LDA     RXBUF+6         ; bw lo (bw is 0..255 since hi=0)
+ 01A3 B9                CMP     C
+ 01A4 DAAA01            JC      RQBW            ; bw < room -- A already holds bw
+ 01A7 C3B001            JMP     RQROOM          ; bw >= room -- use room
+                
+ 01AA 325F08    RQBW:   STA     REQLEN
+ 01AD C3B401            JMP     RQGO
+ 01B0 79        RQROOM: MOV     A,C
+ 01B1 325F08            STA     REQLEN
+ 01B4 AF        RQGO:   XRA     A
+ 01B5 326008            STA     REQLEN+1        ; hi byte always 0 -- REQLEN never exceeds 128
+                
+ 01B8 CDDB02            CALL    MKREAD
+ 01BB CD5503            CALL    SENDPK
+ 01BE CD9C03            CALL    RECVPK
+                
+                ;---- copy REQLEN bytes from RXBUF+6 into BUF+RECPOS --------------------
+ 01C1 21DC07            LXI     H,BUF
+ 01C4 3A5C08            LDA     RECPOS
+ 01C7 5F                MOV     E,A
+ 01C8 1600              MVI     D,0
+ 01CA 19                DAD     D               ; HL = BUF+RECPOS
+ 01CB 112F09            LXI     D,RXBUF+6
+ 01CE 3A5F08            LDA     REQLEN
+ 01D1 47                MOV     B,A
+ 01D2 1A        RCPY:   LDAX    D
+ 01D3 77                MOV     M,A
+ 01D4 23                INX     H
+ 01D5 13                INX     D
+ 01D6 05                DCR     B
+ 01D7 C2D201            JNZ     RCPY
+                
+ 01DA 3A5C08            LDA     RECPOS
+ 01DD 4F                MOV     C,A
+ 01DE 3A5F08            LDA     REQLEN
+ 01E1 81                ADD     C
+ 01E2 325C08            STA     RECPOS
+ 01E5 FE80              CPI     RECLEN
+ 01E7 C26301            JNZ     RLOOP           ; still partial -- go poll again
+ 01EA CD2C02            CALL    RFLUSH
+ 01ED C36301            JMP     RLOOP
+                
+                ;-----------------------------------------------------------------------
+                ; RDONE -- true EOF. Pad and flush any partial final record, close both
+                ; sides, report how much arrived, and exit.
+                ;-----------------------------------------------------------------------
+ 01F0 3A5C08    RDONE:  LDA     RECPOS
+ 01F3 B7                ORA     A
+ 01F4 CA1002            JZ      RCLOSE          ; nothing partial pending
+                
+ 01F7 21DC07            LXI     H,BUF
+ 01FA 3A5C08            LDA     RECPOS
+ 01FD 5F                MOV     E,A
+ 01FE 1600              MVI     D,0
+ 0200 19                DAD     D               ; HL = BUF+RECPOS, the first pad byte
+ 0201 3E80              MVI     A,RECLEN
+ 0203 93                SUB     E                ; A = 128-RECPOS = bytes to pad (E still holds RECPOS)
+ 0204 47                MOV     B,A
+ 0205 3E1A              MVI     A,CPMEOF
+ 0207 77        RPAD:   MOV     M,A
+ 0208 23                INX     H
+ 0209 05                DCR     B
+ 020A C20702            JNZ     RPAD
+ 020D CD2C02            CALL    RFLUSH
+                
+ 0210 CD0F03    RCLOSE: CALL    MKCLOSE
+ 0213 CD5503            CALL    SENDPK
+ 0216 CD9C03            CALL    RECVPK
+                
+ 0219 11B807            LXI     D,FCB
+ 021C 0E10              MVI     C,FCLOSE
+ 021E CD0500            CALL    BDOS
+ 0221 FEFF              CPI     0FFH
+ 0223 CA7002            JZ      ECLOSE
+                
+ 0226 CD1005            CALL    SAYDONE
+ 0229 C30000            JMP     0
+                
+                ;-----------------------------------------------------------------------
+                ; RFLUSH -- write the current record (full, or padded by the caller),
+                ; then reset RECPOS and bump RECS. Does its own DE=FCB/BDOS call, so it
+                ; must not be entered with anything live that needs to survive BDOS.
+                ;-----------------------------------------------------------------------
+ 022C 11B807    RFLUSH: LXI     D,FCB
+ 022F 0E15              MVI     C,FWRITE
+ 0231 CD0500            CALL    BDOS
+ 0234 B7                ORA     A
+ 0235 C27602            JNZ     EWRITE
+ 0238 AF                XRA     A
+ 0239 325C08            STA     RECPOS
+ 023C 2A5D08            LHLD    RECS
+ 023F 23                INX     H
+ 0240 225D08            SHLD    RECS
+ 0243 C9                RET
+                
+ 0244 CD0F03    ABORT:  CALL    MKCLOSE
+ 0247 CD5503            CALL    SENDPK
+ 024A CD9C03            CALL    RECVPK
+ 024D 11B807            LXI     D,FCB
+ 0250 0E10              MVI     C,FCLOSE
+ 0252 CD0500            CALL    BDOS
+ 0255 CDE804            CALL    SAYABRT
+ 0258 C30000            JMP     0
+                
+ 025B CDE004    EFAIL:  CALL    SAYFAIL
+ 025E C30000            JMP     0
+                
+ 0261 CD0F03    ENODIR: CALL    MKCLOSE
+ 0264 CD5503            CALL    SENDPK
+ 0267 CD9C03            CALL    RECVPK
+ 026A CDF004            CALL    SAYNODIR
+ 026D C30000            JMP     0
+                
+ 0270 CDF804    ECLOSE: CALL    SAYECLOS
+ 0273 C30000            JMP     0
+                
+ 0276 CD0005    EWRITE: CALL    SAYEWRIT
+ 0279 C30000            JMP     0
+                
+                ;-----------------------------------------------------------------------
+                ; CKEXIST -- if the destination CP/M file already exists, ask before
+                ; continuing. SEARCH FIRST only reads the directory -- nothing is
+                ; touched -- so this runs before the network side is even opened;
+                ; declining costs nothing because nothing has happened yet.
+                ;-----------------------------------------------------------------------
+ 027C 11B807    CKEXIST:LXI     D,FCB
+ 027F 0E11              MVI     C,SFIRST
+ 0281 CD0500            CALL    BDOS
+ 0284 FEFF              CPI     0FFH
+ 0286 C8                RZ                      ; not found -- nothing to confirm
+                
+ 0287 114B06            LXI     D,MEXIST
+ 028A 0E09              MVI     C,PRSTR
+ 028C CD0500            CALL    BDOS
+ 028F 21A407            LXI     H,NAME
+ 0292 CDB304            CALL    PSTR
+ 0295 115706            LXI     D,MEXIST2
+ 0298 0E09              MVI     C,PRSTR
+ 029A CD0500            CALL    BDOS
+                
+ 029D 0E01              MVI     C,RDCON
+ 029F CD0500            CALL    BDOS
+ 02A2 E65F              ANI     5FH             ; fold lower-case to upper
+ 02A4 FE59              CPI     'Y'
+ 02A6 C8                RZ                      ; yes -- proceed
+                
+ 02A7 117A05            LXI     D,MCRLF
+ 02AA 0E09              MVI     C,PRSTR
+ 02AC CD0500            CALL    BDOS
+ 02AF CD0805            CALL    SAYSKIP
+ 02B2 C30000            JMP     0
+                
+                ;=======================================================================
+                ; BUILDING PACKETS -- see Reference/fujinet/rs232-protocol.md for the
+                ; layout; identical shape to CPM Tools/NC.ASM's MKxxx routines.
+                ;=======================================================================
+                
+ 02B5 216108    MKOPEN: LXI     H,TXBUF
+ 02B8 3671              MVI     M,NETDEV
+ 02BA 23                INX     H
+ 02BB 364F              MVI     M,CMDOPEN
+ 02BD 23                INX     H
+ 02BE 23                INX     H
+ 02BF 23                INX     H
+ 02C0 23                INX     H               ; off2 -> off5
+ 02C1 3602              MVI     M,2             ; descr: two 1-byte params
+ 02C3 23                INX     H
+ 02C4 3604              MVI     M,ACCRD
+ 02C6 23                INX     H
+ 02C7 3600              MVI     M,TRANONE
+ 02C9 23                INX     H               ; -> off8: payload starts here
+ 02CA 114007            LXI     D,SPEC
+ 02CD 1A        MKO1:   LDAX    D
+ 02CE 77                MOV     M,A
+ 02CF 23                INX     H
+ 02D0 13                INX     D
+ 02D1 B7                ORA     A
+ 02D2 C2CD02            JNZ     MKO1            ; copy through and including the NUL
+ 02D5 116108            LXI     D,TXBUF
+ 02D8 C32403            JMP     SETLEN
+                
+ 02DB 216108    MKREAD: LXI     H,TXBUF
+ 02DE 3671              MVI     M,NETDEV
+ 02E0 23                INX     H
+ 02E1 3652              MVI     M,CMDREAD
+ 02E3 23                INX     H
+ 02E4 23                INX     H
+ 02E5 23                INX     H
+ 02E6 23                INX     H
+ 02E7 3605              MVI     M,5             ; descr: one 2-byte param
+ 02E9 23                INX     H
+ 02EA 3A5F08            LDA     REQLEN
+ 02ED 77                MOV     M,A
+ 02EE 23                INX     H
+ 02EF 3A6008            LDA     REQLEN+1
+ 02F2 77                MOV     M,A
+ 02F3 23                INX     H
+ 02F4 116108            LXI     D,TXBUF
+ 02F7 C32403            JMP     SETLEN
+                
+ 02FA 216108    MKSTAT: LXI     H,TXBUF
+ 02FD 3671              MVI     M,NETDEV
+ 02FF 23                INX     H
+ 0300 3653              MVI     M,CMDSTAT
+ 0302 23                INX     H
+ 0303 23                INX     H
+ 0304 23                INX     H
+ 0305 23                INX     H
+ 0306 3600              MVI     M,0
+ 0308 23                INX     H
+ 0309 116108            LXI     D,TXBUF
+ 030C C32403            JMP     SETLEN
+                
+ 030F 216108    MKCLOSE:LXI     H,TXBUF
+ 0312 3671              MVI     M,NETDEV
+ 0314 23                INX     H
+ 0315 3643              MVI     M,CMDCLOS
+ 0317 23                INX     H
+ 0318 23                INX     H
+ 0319 23                INX     H
+ 031A 23                INX     H
+ 031B 3600              MVI     M,0
+ 031D 23                INX     H
+ 031E 116108            LXI     D,TXBUF
+ 0321 C32403            JMP     SETLEN
+                
+                ;-----------------------------------------------------------------------
+                ; SETLEN -- HL = one past the last byte written, DE = TXBUF's start.
+                ;-----------------------------------------------------------------------
+ 0324 7D        SETLEN: MOV     A,L
+ 0325 93                SUB     E
+ 0326 4F                MOV     C,A
+ 0327 7C                MOV     A,H
+ 0328 9A                SBB     D
+ 0329 47                MOV     B,A
+ 032A 79                MOV     A,C
+ 032B 326308            STA     TXBUF+2
+ 032E 78                MOV     A,B
+ 032F 326408            STA     TXBUF+3
+ 0332 AF                XRA     A
+ 0333 326508            STA     TXBUF+4
+ 0336 216108            LXI     H,TXBUF
+ 0339 CD4003            CALL    CKSUM
+ 033C 326508            STA     TXBUF+4
+ 033F C9                RET
+                
+ 0340 1600      CKSUM:  MVI     D,0
+ 0342 78        CK1:    MOV     A,B
+ 0343 B1                ORA     C
+ 0344 CA5303            JZ      CK9
+ 0347 7A                MOV     A,D
+ 0348 86                ADD     M
+ 0349 D24D03            JNC     CK2
+ 034C 3C                INR     A
+ 034D 57        CK2:    MOV     D,A
+ 034E 23                INX     H
+ 034F 0B                DCX     B
+ 0350 C34203            JMP     CK1
+ 0353 7A        CK9:    MOV     A,D
+ 0354 C9                RET
+                
+                ;=======================================================================
+                ; SENDING AND RECEIVING -- SLIP framing over the raw ACIA (verbatim from
+                ; CPM Tools/NC.ASM)
+                ;=======================================================================
+ 0355 3A6308    SENDPK: LDA     TXBUF+2
+ 0358 4F                MOV     C,A
+ 0359 3A6408            LDA     TXBUF+3
+ 035C 47                MOV     B,A
+ 035D 216108            LXI     H,TXBUF
+ 0360 3EC0              MVI     A,SLPEND
+ 0362 CDCD03            CALL    ACOUT
+ 0365 78        SP1:    MOV     A,B
+ 0366 B1                ORA     C
+ 0367 CA9703            JZ      SP9
+ 036A 7E                MOV     A,M
+ 036B FEC0              CPI     SLPEND
+ 036D CA7B03            JZ      SPQEND
+ 0370 FEDB              CPI     SLPESC
+ 0372 CA8803            JZ      SPQESC
+ 0375 CDCD03            CALL    ACOUT
+ 0378 C39203            JMP     SPADV
+ 037B 3EDB      SPQEND: MVI     A,SLPESC
+ 037D CDCD03            CALL    ACOUT
+ 0380 3EDC              MVI     A,SLPEEND
+ 0382 CDCD03            CALL    ACOUT
+ 0385 C39203            JMP     SPADV
+ 0388 3EDB      SPQESC: MVI     A,SLPESC
+ 038A CDCD03            CALL    ACOUT
+ 038D 3EDD              MVI     A,SLPEESC
+ 038F CDCD03            CALL    ACOUT
+ 0392 23        SPADV:  INX     H
+ 0393 0B                DCX     B
+ 0394 C36503            JMP     SP1
+ 0397 3EC0      SP9:    MVI     A,SLPEND
+ 0399 C3CD03            JMP     ACOUT
+                
+ 039C CDD903    RECVPK: CALL    ACIN
+ 039F FEC0              CPI     SLPEND
+ 03A1 C29C03            JNZ     RECVPK
+ 03A4 212909            LXI     H,RXBUF
+ 03A7 010000            LXI     B,0
+ 03AA CDD903    RP1:    CALL    ACIN
+ 03AD FEC0              CPI     SLPEND
+ 03AF CACC03            JZ      RP9
+ 03B2 FEDB              CPI     SLPESC
+ 03B4 C2C603            JNZ     RP3
+ 03B7 CDD903            CALL    ACIN
+ 03BA FEDC              CPI     SLPEEND
+ 03BC CAC403            JZ      RPQEND
+ 03BF 3EDB              MVI     A,SLPESC
+ 03C1 C3C603            JMP     RP3
+ 03C4 3EC0      RPQEND: MVI     A,SLPEND
+ 03C6 77        RP3:    MOV     M,A
+ 03C7 23                INX     H
+ 03C8 03                INX     B
+ 03C9 C3AA03            JMP     RP1
+ 03CC C9        RP9:    RET
+                
+ 03CD F5        ACOUT:  PUSH    PSW
+ 03CE DB12      AO1:    IN      SIOST
+ 03D0 E602              ANI     02H
+ 03D2 CACE03            JZ      AO1
+ 03D5 F1                POP     PSW
+ 03D6 D313              OUT     SIODT
+ 03D8 C9                RET
+                
+ 03D9 DB12      ACIN:   IN      SIOST
+ 03DB E601              ANI     01H
+ 03DD CAD903            JZ      ACIN
+ 03E0 DB13              IN      SIODT
+ 03E2 C9                RET
+                
+                ;=======================================================================
+                ; THE COMMAND TAIL
+                ;
+                ; Hand-rolled, not the CCP's FCB parse -- a URL is not an 8.3 name and
+                ; must never be put through one (same reasoning as HDIR.ASM/R.ASM/
+                ; NC.ASM). TOKEN is bounded by a room count (HDIR.ASM's shape, not
+                ; NC.ASM's -- NC.ASM's own TOKEN has no bound at all, which is fine only
+                ; because HOST/PORT are short; a URL is not, so this copies HDIR's safer
+                ; version).
+                ;=======================================================================
+ 03E3 218000    PARSE:  LXI     H,TAIL
+ 03E6 46                MOV     B,M
+ 03E7 23                INX     H
+ 03E8 CDFF03            CALL    SKIPSP
+ 03EB 114007            LXI     D,SPEC
+ 03EE 0E64              MVI     C,SPECLEN
+ 03F0 CD0B04            CALL    TOKEN
+ 03F3 CDFF03            CALL    SKIPSP
+ 03F6 11A407            LXI     D,NAME
+ 03F9 0E14              MVI     C,NAMLEN
+ 03FB CD0B04            CALL    TOKEN
+ 03FE C9                RET
+                
+ 03FF 78        SKIPSP: MOV     A,B
+ 0400 B7                ORA     A
+ 0401 C8                RZ
+ 0402 7E                MOV     A,M
+ 0403 FE20              CPI     ' '
+ 0405 C0                RNZ
+ 0406 23                INX     H
+ 0407 05                DCR     B
+ 0408 C3FF03            JMP     SKIPSP
+                
+ 040B 79        TOKEN:  MOV     A,C
+ 040C FE01              CPI     1
+ 040E CA2404            JZ      TOKEND
+ 0411 78                MOV     A,B
+ 0412 B7                ORA     A
+ 0413 CA2404            JZ      TOKEND
+ 0416 7E                MOV     A,M
+ 0417 FE20              CPI     ' '
+ 0419 CA2404            JZ      TOKEND
+ 041C 12                STAX    D
+ 041D 23                INX     H
+ 041E 13                INX     D
+ 041F 05                DCR     B
+ 0420 0D                DCR     C
+ 0421 C30B04            JMP     TOKEN
+ 0424 AF        TOKEND: XRA     A
+ 0425 12                STAX    D
+ 0426 C9                RET
+                
+                ;=======================================================================
+                ; THE FCB -- build one from the NUL-terminated name at HL. Verbatim from
+                ; CPM Tools/R.ASM's MKFCB/LEGAL: handles an optional drive prefix, folds
+                ; to 8.3, drops characters CP/M cannot store rather than refusing.
+                ;=======================================================================
+ 0427 E5        MKFCB:  PUSH    H
+                
+ 0428 21B807            LXI     H,FCB
+ 042B 0624              MVI     B,36
+ 042D 3600      MF0:    MVI     M,0
+ 042F 23                INX     H
+ 0430 05                DCR     B
+ 0431 C22D04            JNZ     MF0
+                
+ 0434 21B907            LXI     H,FCB+1
+ 0437 060B              MVI     B,11
+ 0439 3620      MF1:    MVI     M,' '
+ 043B 23                INX     H
+ 043C 05                DCR     B
+ 043D C23904            JNZ     MF1
+                
+ 0440 E1                POP     H
+                
+ 0441 7E                MOV     A,M
+ 0442 B7                ORA     A
+ 0443 C8                RZ
+ 0444 23                INX     H
+ 0445 7E                MOV     A,M
+ 0446 FE3A              CPI     ':'
+ 0448 C25704            JNZ     MF2
+ 044B 2B                DCX     H
+ 044C 7E                MOV     A,M
+ 044D D640              SUI     'A'-1
+ 044F 32B807            STA     FCB
+ 0452 23                INX     H
+ 0453 23                INX     H
+ 0454 C35804            JMP     MF3
+ 0457 2B        MF2:    DCX     H
+                
+ 0458 11B907    MF3:    LXI     D,FCB+1
+ 045B 0608              MVI     B,8
+ 045D 7E        MF4:    MOV     A,M
+ 045E B7                ORA     A
+ 045F CA9804            JZ      MF9
+ 0462 FE2E              CPI     '.'
+ 0464 CA7B04            JZ      MF5
+ 0467 CD9904            CALL    LEGAL
+ 046A DA7704            JC      MF4N
+ 046D 4F                MOV     C,A
+ 046E 78                MOV     A,B
+ 046F B7                ORA     A
+ 0470 CA7704            JZ      MF4N
+ 0473 79                MOV     A,C
+ 0474 12                STAX    D
+ 0475 13                INX     D
+ 0476 05                DCR     B
+ 0477 23        MF4N:   INX     H
+ 0478 C35D04            JMP     MF4
+                
+ 047B 23        MF5:    INX     H
+ 047C 11C107            LXI     D,FCB+9
+ 047F 0603              MVI     B,3
+ 0481 7E        MF6:    MOV     A,M
+ 0482 B7                ORA     A
+ 0483 C8                RZ
+ 0484 CD9904            CALL    LEGAL
+ 0487 DA9404            JC      MF6N
+ 048A 4F                MOV     C,A
+ 048B 78                MOV     A,B
+ 048C B7                ORA     A
+ 048D CA9404            JZ      MF6N
+ 0490 79                MOV     A,C
+ 0491 12                STAX    D
+ 0492 13                INX     D
+ 0493 05                DCR     B
+ 0494 23        MF6N:   INX     H
+ 0495 C38104            JMP     MF6
+                
+ 0498 C9        MF9:    RET
+                
+                ;-----------------------------------------------------------------------
+                ; LEGAL -- CY set if A is a character CP/M cannot put in a filename.
+                ;-----------------------------------------------------------------------
+ 0499 E5        LEGAL:  PUSH    H
+ 049A 4F                MOV     C,A
+ 049B 213107            LXI     H,ILLCHR
+ 049E 7E        LG1:    MOV     A,M
+ 049F B7                ORA     A
+ 04A0 CAAB04            JZ      LGOK
+ 04A3 B9                CMP     C
+ 04A4 CAAF04            JZ      LGBAD
+ 04A7 23                INX     H
+ 04A8 C39E04            JMP     LG1
+ 04AB 79        LGOK:   MOV     A,C
+ 04AC E1                POP     H
+ 04AD B7                ORA     A
+ 04AE C9                RET
+ 04AF 79        LGBAD:  MOV     A,C
+ 04B0 E1                POP     H
+ 04B1 37                STC
+ 04B2 C9                RET
+                
+                ;=======================================================================
+                ; TALKING TO THE USER
+                ;=======================================================================
+ 04B3 7E        PSTR:   MOV     A,M
+ 04B4 B7                ORA     A
+ 04B5 C8                RZ
+ 04B6 E5                PUSH    H
+ 04B7 5F                MOV     E,A
+ 04B8 0E02              MVI     C,CONOUT
+ 04BA CD0500            CALL    BDOS
+ 04BD E1                POP     H
+ 04BE 23                INX     H
+ 04BF C3B304            JMP     PSTR
+                
+ 04C2 116805    SAYCONN:LXI     D,MCONN
+ 04C5 0E09              MVI     C,PRSTR
+ 04C7 CD0500            CALL    BDOS
+ 04CA 214007            LXI     H,SPEC
+ 04CD CDB304            CALL    PSTR
+ 04D0 117A05            LXI     D,MCRLF
+ 04D3 0E09              MVI     C,PRSTR
+ 04D5 C30500            JMP     BDOS
+                
+ 04D8 117D05    SAYOK:  LXI     D,MOK
+ 04DB 0E09              MVI     C,PRSTR
+ 04DD C30500            JMP     BDOS
+                
+ 04E0 119505    SAYFAIL:LXI     D,MFAIL
+ 04E3 0E09              MVI     C,PRSTR
+ 04E5 C30500            JMP     BDOS
+                
+ 04E8 11AF05    SAYABRT:LXI     D,MABRT
+ 04EB 0E09              MVI     C,PRSTR
+ 04ED C30500            JMP     BDOS
+                
+                SAYNODIR:
+ 04F0 11C505            LXI     D,MNODIR
+ 04F3 0E09              MVI     C,PRSTR
+ 04F5 C30500            JMP     BDOS
+                
+                SAYECLOS:
+ 04F8 11F405            LXI     D,MECLOS
+ 04FB 0E09              MVI     C,PRSTR
+ 04FD C30500            JMP     BDOS
+                
+                SAYEWRIT:
+ 0500 111506            LXI     D,MEWRIT
+ 0503 0E09              MVI     C,PRSTR
+ 0505 C30500            JMP     BDOS
+                
+ 0508 117006    SAYSKIP:LXI     D,MSKIP
+ 050B 0E09              MVI     C,PRSTR
+ 050D C30500            JMP     BDOS
+                
+                ;-----------------------------------------------------------------------
+                ; SAYDONE -- "NNN records received." -- PRDEC/DIV10 copied from
+                ; CPM Tools/HDIR.ASM.
+                ;-----------------------------------------------------------------------
+ 0510 117A05    SAYDONE:LXI     D,MCRLF
+ 0513 0E09              MVI     C,PRSTR
+ 0515 CD0500            CALL    BDOS
+ 0518 2A5D08            LHLD    RECS
+ 051B CD2605            CALL    PRDEC
+ 051E 113606            LXI     D,MRECS
+ 0521 0E09              MVI     C,PRSTR
+ 0523 C30500            JMP     BDOS
+                
+ 0526 11F109    PRDEC:  LXI     D,NUMEND
+ 0529 3E24              MVI     A,'$'
+ 052B 12                STAX    D
+ 052C 1B        PD1:    DCX     D
+ 052D CD3D05            CALL    DIV10
+ 0530 C630              ADI     '0'
+ 0532 12                STAX    D
+ 0533 7C                MOV     A,H
+ 0534 B5                ORA     L
+ 0535 C22C05            JNZ     PD1
+ 0538 0E09              MVI     C,PRSTR
+ 053A C30500            JMP     BDOS
+                
+ 053D C5        DIV10:  PUSH    B
+ 053E 010000            LXI     B,0
+ 0541 7C        DV1:    MOV     A,H
+ 0542 B7                ORA     A
+ 0543 C24C05            JNZ     DV2
+ 0546 7D                MOV     A,L
+ 0547 FE0A              CPI     10
+ 0549 DA5805            JC      DV3
+ 054C 7D        DV2:    MOV     A,L
+ 054D D60A              SUI     10
+ 054F 6F                MOV     L,A
+ 0550 7C                MOV     A,H
+ 0551 DE00              SBI     0
+ 0553 67                MOV     H,A
+ 0554 03                INX     B
+ 0555 C34105            JMP     DV1
+ 0558 7D        DV3:    MOV     A,L
+ 0559 60                MOV     H,B
+ 055A 69                MOV     L,C
+ 055B C1                POP     B
+ 055C C9                RET
+                
+ 055D 118B06    USAGE:  LXI     D,MUSAGE
+ 0560 0E09              MVI     C,PRSTR
+ 0562 CD0500            CALL    BDOS
+ 0565 C30000            JMP     0
+                
+                ;=======================================================================
+                ; DATA
+                ;=======================================================================
+ 0568 46554A4947MCONN:  DB      'FUJIGET: opening $'
+ 057A 0D0A24    MCRLF:  DB      CR,LF,'$'
+ 057D 4F70656E20MOK:    DB      'Open OK. Receiving...',CR,LF,'$'
+ 0595 0D0A46554AMFAIL:  DB      CR,LF,'FUJIGET: open failed.',CR,LF,'$'
+ 05AF 0D0A46554AMABRT:  DB      CR,LF,'FUJIGET: aborted.',CR,LF,'$'
+ 05C5 0D0A46554AMNODIR: DB      CR,LF,'FUJIGET: can''t make file (directory full).',CR,LF,'$'
+ 05F4 0D0A46554AMECLOS: DB      CR,LF,'FUJIGET: error closing file.',CR,LF,'$'
+ 0615 0D0A46554AMEWRIT: DB      CR,LF,'FUJIGET: error writing file.',CR,LF,'$'
+ 0636 207265636FMRECS:  DB      ' records received.',CR,LF,'$'
+ 064B 0D0A46554AMEXIST: DB      CR,LF,'FUJIGET: $'
+ 0657 2065786973MEXIST2:DB      ' exists. Replace? (Y/N) $'
+ 0670 0D0A46554AMSKIP:  DB      CR,LF,'FUJIGET: not replaced.',CR,LF,'$'
+                
+ 068B 0D0A46554AMUSAGE: DB      CR,LF,'FUJIGET v1.0 -- fetch a file through FujiNet''s'
+ 06BB 204E3A206E        DB      ' N: network device.',CR,LF,CR,LF
+ 06D2 2020204655        DB      '   FUJIGET N:<url> file.ext',CR,LF,CR,LF
+ 06F1 4578616D70        DB      'Example',CR,LF
+ 06FA 2020204655        DB      '   FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT',CR,LF,'$'
+                
+                ; ILLCHR -- verbatim from R.ASM. The ';' MUST be its own numeric byte, not
+                ; inside the string: ASM.COM strips the comment before it parses quotes,
+                ; so a semicolon inside one truncates the line and it dies with a syntax
+                ; error (R.ASM's own comment on this, learned the hard way there).
+ 0731 3C3E2E2C  ILLCHR: DB      '<>.,'
+ 0735 3B                DB      3BH             ; ';'
+ 0736 3A3D3F2A5B        DB      ':=?*[]|'
+ 073D 5C2F00            DB      5CH,2FH,0
+                
+                ;---- Variables ---------------------------------------------------------
+ 0740           SPEC:   DS      SPECLEN
+ 07A4           NAME:   DS      NAMLEN
+ 07B8           FCB:    DS      36              ; ours, not the CCP's at 5CH
+ 07DC           BUF:    DS      RECLEN
+ 085C           RECPOS: DS      1
+ 085D           RECS:   DS      2
+ 085F           REQLEN: DS      2
+                
+ 0861           TXBUF:  DS      200
+ 0929           RXBUF:  DS      200
+ 09F1           NUMEND: DS      1
+                
+ 09F2                   DS      64              ; stack
+ 0A32 =         STACK   EQU     $
+                
+ 0A32                   END     START
