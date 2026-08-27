@@ -1,10 +1,17 @@
 # FujiNet for CP/M on altairsim
 
-Three small CP/M utilities that give a CP/M machine running under `altairsim` access to
-FujiNet's `N:` network device — file transfer and directory listing over TCP, HTTP, TNFS, and
-anything else FujiNet's network protocol layer understands. Modeled on Mike Douglas's classic
-`PCGET`/`PCPUT` (Xmodem-based CP/M↔PC transfer tools for the Altair 88-2SIO), with FujiNet's
-own request/response protocol standing in for Xmodem.
+Three small CP/M utilities that give a CP/M machine running under
+[`altairsim`](https://github.com/deltecent/altairsim) access to FujiNet's `N:` network device —
+file transfer and directory listing over TCP, HTTP, TNFS, and anything else FujiNet's network
+protocol layer understands. Modeled on Mike Douglas's classic
+[`PCGET`/`PCPUT`](https://deramp.com/downloads/altair/software/utilities/PCGET%20and%20PCPUT/)
+(Xmodem-based CP/M↔PC transfer tools for the Altair 88-2SIO), with FujiNet's own
+request/response protocol standing in for Xmodem.
+
+(`altairsim` also ships its own `R.COM`/`W.COM` file-transfer tools, but those talk to a
+"Host Bridge" virtual card that's unique to the emulator — there's no equivalent on real
+hardware. PCGET/PCPUT's serial-line approach is the one that generalizes to any CP/M machine,
+real or emulated, which is why FUJIGET/FUJIPUT follow that lineage instead.)
 
 ```
 FUJIGET N:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
