@@ -21,7 +21,7 @@ FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.16
 
 Each tool is versioned independently (they change on their own schedule, not together) and
 prints its own version when run with no arguments. Current versions: `FUJIGET` v1.0, `FUJIPUT`
-v1.0, `FUJIDIR` v1.0.
+v1.0, `FUJIDIR` v1.1.
 
 This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
 No cross-assembler is used anywhere in this project — these were built by CP/M's own
@@ -227,17 +227,20 @@ that padding on the way out:
 FUJIDIR N:<url>
 ```
 
-Opens `<url>` in FujiNet's directory-listing mode and prints what comes back: one name per
-line, subdirectories marked with a trailing `/`. Works for any URL scheme FujiNet's `N:`
-device treats as a filesystem (TNFS, SMB, etc.) — e.g. `FUJIDIR N1:TNFS://192.168.1.5/` lists
-the TNFS server's root, `FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory.
+Opens `<url>` in FujiNet's directory-listing mode and prints what comes back: one entry per
+line. Files get a right-justified size column (plain bytes under 1K, `NNNNK` up to 1MB, `N.NM`
+above that); subdirectories are marked with a trailing `/` and no size (FujiNet always reports
+one for directories too, but it's a meaningless placeholder, so FUJIDIR drops it). Works for
+any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) — e.g.
+`FUJIDIR N1:TNFS://192.168.1.5/` lists the TNFS server's root,
+`FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory.
 
 ### A worked example, start to finish
 
 ```
 A0>FUJIDIR N1:TNFS://192.168.1.5/
 FUJIDIR: listing N1:TNFS://192.168.1.5/
-HELLO.TXT
+HELLO.TXT                          14
 
 A0>FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 FUJIGET: opening N1:TNFS://192.168.1.5/HELLO.TXT
