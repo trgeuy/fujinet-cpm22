@@ -19,17 +19,19 @@ FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNF
 FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/
 ```
 
-Also included: `NC.COM`, a raw netcat-style tool (`NC <host> <port>`) that opens a TCP
-connection through FujiNet's `N:` device directly — the first of these four tools built, and
-useful on its own for testing a link or talking to a plain TCP service.
-
 Each tool is versioned independently (they change on their own schedule, not together) and
-prints its own version when run with no arguments. Current versions: `NC` v1.0, `FUJIGET`
-v1.0, `FUJIPUT` v1.0, `FUJIDIR` v1.0.
+prints its own version when run with no arguments. Current versions: `FUJIGET` v1.0, `FUJIPUT`
+v1.0, `FUJIDIR` v1.0.
 
-This folder has all four programs ready to run (`.COM`), their assembly source (`.ASM`), and
-the assembler listings (`.PRN`). No cross-assembler is used anywhere in this project — these
-were built by CP/M's own `ASM.COM`/`LOAD.COM`, running inside the emulated machine.
+This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
+No cross-assembler is used anywhere in this project — these were built by CP/M's own
+`ASM.COM`/`LOAD.COM`, running inside the emulated machine.
+
+This repo also has, in `testing/`: `NC.COM`, a raw netcat-style tool (`NC <host> <port>`) that
+opens a TCP connection through FujiNet's `N:` device directly — the first of these tools built,
+and useful on its own for testing a link or talking to a plain TCP service. It's a diagnostic
+aid, not part of the packaged release — download `testing/NC.COM`/`.HEX`/`.ASM` separately from
+this repo if you need it.
 
 ## What's tested so far
 
@@ -158,7 +160,8 @@ CP/M 2.2 system:
    terminals set), then send `FUJIGET.HEX` as plain ASCII text. When it's done, type Ctrl-Z to
    signal end-of-file; PIP returns to the prompt.
 3. `A>LOAD FUJIGET` — this reads `FUJIGET.HEX` and writes `FUJIGET.COM`, ready to run.
-4. Repeat for `FUJIPUT.HEX`, `FUJIDIR.HEX`, and `NC.HEX` (or skip whichever you don't need).
+4. Repeat for `FUJIPUT.HEX` and `FUJIDIR.HEX` (or skip whichever you don't need). If you also
+   want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
 
 **To rebuild from source** instead of using the provided `.HEX`/`.COM`: get the `.ASM` onto the
 disk the same paced-paste way (`PIP FUJIGET.ASM=CON:[H]`), then `ASM FUJIGET` (produces a fresh
@@ -253,21 +256,16 @@ Open OK. Sending...
 
 ## 5. Adapting to different hardware
 
-All four of these programs talk **directly to I/O ports**, with no BDOS or BIOS
+All three of these programs (and `testing/NC.ASM`) talk **directly to I/O ports**, with no BDOS or BIOS
 indirection in between. That's deliberate, not an oversight: CP/M's BDOS console calls are
 wired to the one `CON:` device only, so there's no BDOS console call that reaches a *second*
-serial line. (There *is* a CP/M-standard indirection mechanism that can, on some systems —
-`IOBYTE`, routed through BDOS functions 3/4 — and it was confirmed, by disassembling the BIOS
-this project develops against, to genuinely reach the second 2SIO unit on *that* BIOS via `STAT
-RDR:=UR2:`/`PUN:=UP2:`. See `docs/iobyte-rdr-pun.md` in this folder for the full finding and
-why it wasn't adopted here — it's a property of that one BIOS, not something to assume for
-yours, so these programs still use direct port I/O by default.)
+serial line.
 
 That means **the source is the config file**. If your hardware doesn't match this project's
 assumptions, you edit the `.ASM`, reassemble (`ASM FUJIGET` / `LOAD FUJIGET`, etc.), and you're
 done — there's no separate settings file, because CP/M's `ASM.COM` has no `INCLUDE` directive.
 Each `.ASM` carries its own copy of the two things below; if you change one, **change it in
-all four files** and rebuild each one.
+all of them** (including `testing/NC.ASM`, if you use it) and rebuild each one.
 
 ### 1. The port addresses
 
@@ -360,4 +358,4 @@ everything above works identically against `127.0.0.1` as it would against a rea
 This README is about *using* the tools; the wire protocol they implement (SLIP framing,
 packet layout, command bytes) is documented in `docs/rs232-protocol.md` in this folder,
 reverse-engineered from `fujinet-firmware`'s source and verified live against a running
-`fujinet-pc-RS232`. `docs/iobyte-rdr-pun.md` (referenced above) has the `IOBYTE`/BIOS research.
+`fujinet-pc-RS232`.
