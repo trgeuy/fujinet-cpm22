@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIPUT.COM v1.0 -- send a file through FujiNet's N: network device.
+; FUJIPUT.COM v1.1 -- send a file through FujiNet's N: network device.
 ;
 ;       FUJIPUT file.ext N:<url> [B|T]     e.g.  FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 ;
@@ -266,12 +266,14 @@ CKREPLACE:
         MVI     C,RDCON
         CALL    BDOS
         ANI     5FH             ; fold lower-case to upper
-        CPI     'Y'
-        RZ                      ; yes -- proceed to the real open
-
+        PUSH    PSW             ; save the answer -- MCRLF below clobbers A
         LXI     D,MCRLF
         MVI     C,PRSTR
         CALL    BDOS
+        POP     PSW
+        CPI     'Y'
+        RZ                      ; yes -- proceed to the real open
+
         CALL    SAYSKIP
         JMP     0
 
@@ -703,7 +705,7 @@ MSKIP:  DB      CR,LF,'FUJIPUT: not sent.',CR,LF,'$'
 MEBADSW:DB      CR,LF,'FUJIPUT: the switch is B (every byte, the default) or'
         DB      ' T (stop at the first ^Z).',CR,LF,'$'
 
-MUSAGE: DB      CR,LF,'FUJIPUT v1.0 -- send a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIPUT v1.1 -- send a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIPUT file.ext N:<url> [B|T]',CR,LF,CR,LF
         DB      'Example',CR,LF

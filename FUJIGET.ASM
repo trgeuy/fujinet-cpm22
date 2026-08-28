@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIGET.COM v1.0 -- fetch a file through FujiNet's N: network device.
+; FUJIGET.COM v1.1 -- fetch a file through FujiNet's N: network device.
 ;
 ;       FUJIGET N:<url> file.ext        e.g.  FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 ;
@@ -322,12 +322,14 @@ CKEXIST:LXI     D,FCB
         MVI     C,RDCON
         CALL    BDOS
         ANI     5FH             ; fold lower-case to upper
-        CPI     'Y'
-        RZ                      ; yes -- proceed
-
+        PUSH    PSW             ; save the answer -- MCRLF below clobbers A
         LXI     D,MCRLF
         MVI     C,PRSTR
         CALL    BDOS
+        POP     PSW
+        CPI     'Y'
+        RZ                      ; yes -- proceed
+
         CALL    SAYSKIP
         JMP     0
 
@@ -789,7 +791,7 @@ MEXIST: DB      CR,LF,'FUJIGET: $'
 MEXIST2:DB      ' exists. Replace? (Y/N) $'
 MSKIP:  DB      CR,LF,'FUJIGET: not replaced.',CR,LF,'$'
 
-MUSAGE: DB      CR,LF,'FUJIGET v1.0 -- fetch a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIGET v1.1 -- fetch a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIGET N:<url> file.ext',CR,LF,CR,LF
         DB      'Example',CR,LF

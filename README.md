@@ -20,8 +20,8 @@ FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.16
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
-prints its own version when run with no arguments. Current versions: `FUJIGET` v1.0, `FUJIPUT`
-v1.0, `FUJIDIR` v1.1.
+prints its own version when run with no arguments. Current versions: `FUJIGET` v1.1, `FUJIPUT`
+v1.1, `FUJIDIR` v1.1.
 
 This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
 No cross-assembler is used anywhere in this project — these were built by CP/M's own
