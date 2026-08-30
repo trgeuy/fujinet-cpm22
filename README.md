@@ -38,6 +38,11 @@ and useful on its own for testing a link or talking to a plain TCP service. It's
 aid, not part of the packaged release — download `testing/NC.COM`/`.HEX`/`.ASM` separately from
 this repo if you need it.
 
+Likewise, `altairsim/` (a ready-to-run `8800c.toml`, two disk images, and a `run-fujinet`
+launcher script — see sections 1 and 2 below) is only useful if you're actually setting up
+`altairsim` itself, so it isn't in the packaged release either — get it from
+<https://github.com/trgeuy/fujinet-cpm22/tree/main/altairsim> if you want it.
+
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
