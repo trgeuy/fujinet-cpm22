@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIDIR.COM v1.1 -- list a directory through FujiNet's N: network device.
+; FUJIDIR.COM v1.3 -- list a directory through FujiNet's N: network device.
 ;
 ;       FUJIDIR N:<url>         e.g.  FUJIDIR N1:TNFS://192.168.1.5/
 ;
@@ -24,6 +24,36 @@
 ; entry per line, so this program's read loop didn't need to change at
 ; all, only the format byte's value. See docs/rs232-protocol.md for the
 ; wire details this and FUJIGET.ASM/FUJIPUT.ASM share.
+;-----------------------------------------------------------------------
+; v1.2: the OPEN target is now always probed WITH a trailing slash
+; (PROBESPC, built by MKPRBS), never the bare typed SPEC. Without one, a
+; bare last path segment is a WILDCARD PATTERN filtering a listing of
+; the PARENT, not an exact-path open -- confirmed live, see Reference/
+; fujinet/rs232-protocol.md's "DIRECTORY-mode OPEN is a wildcard-pattern
+; list" section. This was a real, pre-existing bug (v1.0/v1.1 both had
+; it): "FUJIDIR N1:TNFS://host/SUBDIR" with no trailing slash could ACK
+; and list the PARENT's matching entries instead of SUBDIR's contents,
+; or even instead of cleanly failing, whenever the parent happened to
+; be non-empty.
+;
+; Also v1.2: if the real OPEN still fails after that fix, FujiNet's NAK
+; carries no error detail at all (confirmed from firmware source -- see
+; FUJIMKD.ASM's header for the full explanation). Instead, probe the
+; PARENT directory (same MKOPEN, pointed at PARENT instead of PROBESPC
+; -- MKPRNT already guarantees PARENT ends in '/'): if it exists, the
+; target almost certainly just isn't there (reported as "not found,"
+; not "denied" -- unlike FUJIMKD/FUJIPUT, there's no "we're about to
+; create something new" expectation for a listing); if the parent
+; doesn't exist either, the path itself is bad.
+;-----------------------------------------------------------------------
+; v1.3: RECVPK no longer waits forever for a reply. If FujiNet-PC never
+; answers at all -- its own connect attempt to a dead/unreachable
+; remote hanging, say -- the guest has no way to notice on its own
+; (there is no interrupt-driven timeout, no BDOS timer call used
+; anywhere in this program). RECVPK now gives up after a bounded
+; busy-wait (TOOUTR below) and reports it directly rather than hanging.
+; This budget is approximate and CPU-clock-speed-dependent, not a
+; calibrated number of seconds -- see TOOUTR's own comment.
 ;-----------------------------------------------------------------------
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ;-----------------------------------------------------------------------
@@ -52,6 +82,14 @@ SIOST   EQU     12H
 SIODT   EQU     13H
 SIORST  EQU     03H
 SIOCTL  EQU     15H
+
+;---- How long RECVPK waits for a reply before giving up -----------------
+; TOOUTR outer passes, each a full 16-bit busy-wait -- roughly 15-20
+; real seconds on a stock 2MHz Altair, but this is a rough CPU-cycle
+; count, not a calibrated timer: it scales with actual clock speed
+; (faster hardware times out sooner, slower hardware later). Raise or
+; lower it per your hardware if the default feels wrong.
+TOOUTR  EQU     10
 
 ;---- The FujiNet RS232 wire protocol (Reference/fujinet/rs232-protocol.md)
 NETDEV  EQU     71H
@@ -92,6 +130,9 @@ START:  LXI     SP,STACK
 
         CALL    SAYCONN
 
+        CALL    MKPRBS          ; SPEC -> PROBESPC, with a trailing '/'
+        LXI     H,PROBESPC
+        SHLD    SRCPTR
         CALL    MKOPEN
         CALL    SENDPK
         CALL    RECVPK
@@ -203,7 +244,37 @@ ABORT:  LDA     LINELEN
         CALL    SAYABRT
         JMP     0
 
-EFAIL:  CALL    SAYFAIL
+;-----------------------------------------------------------------------
+; EFAIL -- the real OPEN was NAK'd. Probe the PARENT directory to guess
+; why: if it exists, the target almost certainly just isn't there; if
+; the parent doesn't exist either, the path itself is bad. See this
+; file's header for why "not found" (not "denied") is the right default
+; here.
+;-----------------------------------------------------------------------
+EFAIL:  CALL    MKPRNT
+        LDA     PVALID
+        ORA     A
+        JZ      DOSNF           ; couldn't even determine a parent -- default
+
+        LXI     H,PARENT
+        SHLD    SRCPTR
+        CALL    MKOPEN
+        CALL    SENDPK
+        CALL    RECVPK
+        LDA     RXBUF+1
+
+        PUSH    PSW
+        CALL    MKCLOSE
+        CALL    SENDPK
+        CALL    RECVPK
+        POP     PSW
+
+        CPI     ACKCMD
+        JZ      DOSNF           ; parent exists -- so the target just isn't there
+        CALL    SAYBAD
+        JMP     0
+
+DOSNF:  CALL    SAYNFND
         JMP     0
 
 ;=======================================================================
@@ -283,7 +354,16 @@ PRNB1:  MOV     A,B
 ; shape to CPM Tools/NC.ASM's/FUJIGET.ASM's MKxxx routines.
 ;=======================================================================
 
-MKOPEN: LXI     H,TXBUF
+;-----------------------------------------------------------------------
+; MKOPEN -- a directory-mode OPEN against whatever SRCPTR points at:
+; PROBESPC for the real listing target, or PARENT for the post-failure
+; diagnostic probe (see EFAIL above). Both are guaranteed to end in
+; '/' by their respective builders (MKPRBS/MKPRNT below) -- see this
+; file's header for why that trailing slash is mandatory.
+;-----------------------------------------------------------------------
+MKOPEN: LHLD    SRCPTR
+        XCHG                    ; DE = the string to embed
+        LXI     H,TXBUF
         MVI     M,NETDEV
         INX     H
         MVI     M,CMDOPEN
@@ -297,7 +377,6 @@ MKOPEN: LXI     H,TXBUF
         INX     H
         MVI     M,DIRFLONG
         INX     H
-        LXI     D,SPEC
 MKO1:   LDAX    D
         MOV     M,A
         INX     H
@@ -306,6 +385,89 @@ MKO1:   LDAX    D
         JNZ     MKO1
         LXI     D,TXBUF
         JMP     SETLEN
+
+;-----------------------------------------------------------------------
+; MKPRBS -- copy SPEC into PROBESPC, appending a trailing '/' if SPEC
+; doesn't already end in one. See this file's header for why.
+;-----------------------------------------------------------------------
+MKPRBS: LXI     H,SPEC
+        LXI     D,PROBESPC
+MKB1:   MOV     A,M
+        ORA     A
+        JZ      MKB2
+        STAX    D
+        INX     H
+        INX     D
+        JMP     MKB1
+MKB2:   DCX     D               ; DE -> last copied character
+        LDAX    D
+        CPI     '/'
+        JZ      MKB3
+        INX     D
+        MVI     A,'/'
+        STAX    D
+MKB3:   INX     D
+        XRA     A
+        STAX    D
+        RET
+
+;-----------------------------------------------------------------------
+; MKPRNT -- build PARENT (NUL-terminated) as the parent directory of
+; SPEC's path: strip one trailing '/' if present, then everything up to
+; and including the previous '/'. PVALID is set to 1 if a boundary was
+; found (PARENT is ready to use), 0 if not (caller should skip the
+; parent probe and default to "not found"). Identical to FUJIMKD.ASM's.
+;-----------------------------------------------------------------------
+MKPRNT: MVI     B,0FFH          ; B = index of the second-to-last '/' seen
+        MVI     C,0FFH          ; C = index of the last '/' seen
+        MVI     E,0             ; E = running index into SPEC
+        LXI     H,SPEC
+MPSCAN: MOV     A,M
+        ORA     A
+        JZ      MPDONE
+        CPI     '/'
+        JNZ     MPNEXT
+        MOV     B,C
+        MOV     C,E
+MPNEXT: INX     H
+        INR     E
+        JMP     MPSCAN
+
+MPDONE: MOV     A,C
+        CPI     0FFH
+        JZ      MPNONE          ; no '/' anywhere -- no parent determinable
+        DCR     E               ; E = index of the last real character
+        MOV     A,E
+        CMP     C
+        JNZ     MPGOTB          ; last char isn't a '/' -- boundary = C
+        MOV     A,B
+        CPI     0FFH
+        JZ      MPNONE          ; the only '/' was that trailing one
+        MOV     C,A             ; boundary = the second-to-last '/' instead
+
+MPGOTB: LXI     H,SPEC
+        LXI     D,PARENT
+        MOV     A,C
+        INR     A               ; bytes to copy = boundary+1 (keep the '/')
+        MOV     C,A
+MPCPY:  MOV     A,C
+        ORA     A
+        JZ      MPTERM
+        MOV     A,M
+        STAX    D
+        INX     H
+        INX     D
+        DCR     C
+        JMP     MPCPY
+MPTERM: XRA     A
+        STAX    D
+        MVI     A,1
+        STA     PVALID
+        RET
+
+MPNONE: XRA     A
+        STA     PVALID
+        RET
 
 MKREAD: LXI     H,TXBUF
         MVI     M,NETDEV
@@ -422,9 +584,35 @@ SPADV:  INX     H
 SP9:    MVI     A,SLPEND
         JMP     ACOUT
 
-RECVPK: CALL    ACIN
+;-----------------------------------------------------------------------
+; RECVPK -- waits for the reply's leading SLPEND sync byte with a
+; bounded busy-wait (TOOUTR outer passes x a full 16-bit inner
+; countdown): if nothing at all comes back, print MNORE and quit rather
+; than hang forever. Once the sync byte is seen, the rest of the packet
+; is read with no further timeout -- a stall mid-packet, after real
+; framing has started, is a different (and much rarer) failure than
+; "no response at all," and out of scope here.
+;-----------------------------------------------------------------------
+RECVPK: MVI     A,TOOUTR
+        STA     TOCNT
+RPSYNC: LXI     B,0
+RPWAIT: IN      SIOST
+        ANI     01H
+        JNZ     RPGOTB
+        DCX     B
+        MOV     A,B
+        ORA     C
+        JNZ     RPWAIT
+        LDA     TOCNT
+        DCR     A
+        STA     TOCNT
+        JNZ     RPSYNC
+        CALL    SAYNORE         ; gave up -- no reply at all
+        JMP     0
+
+RPGOTB: IN      SIODT
         CPI     SLPEND
-        JNZ     RECVPK
+        JNZ     RPSYNC          ; noise, not the sync byte -- keep waiting
         LXI     H,RXBUF
         LXI     B,0
 RP1:    CALL    ACIN
@@ -523,7 +711,15 @@ SAYCONN:LXI     D,MCONN
         MVI     C,PRSTR
         JMP     BDOS
 
-SAYFAIL:LXI     D,MFAIL
+SAYNORE:LXI     D,MNORE
+        MVI     C,PRSTR
+        JMP     BDOS
+
+SAYNFND:LXI     D,MNFND
+        MVI     C,PRSTR
+        JMP     BDOS
+
+SAYBAD: LXI     D,MBADP
         MVI     C,PRSTR
         JMP     BDOS
 
@@ -544,19 +740,29 @@ USAGE:  LXI     D,MUSAGE
 ; DATA
 ;=======================================================================
 MCONN:  DB      'FUJIDIR: listing $'
+MNORE:  DB      CR,LF,'FUJIDIR: destination server not'
+        DB      ' responding.',CR,LF,'$'
 MCRLF:  DB      CR,LF,'$'
-MFAIL:  DB      CR,LF,'FUJIDIR: open failed.',CR,LF,'$'
+MNFND:  DB      CR,LF,'FUJIDIR: not found on that remote'
+        DB      ' server.',CR,LF,'$'
+MBADP:  DB      CR,LF,'FUJIDIR: failed -- parent path does not'
+        DB      ' exist.',CR,LF,'$'
 MABRT:  DB      CR,LF,'FUJIDIR: aborted.',CR,LF,'$'
 MNONE:  DB      'FUJIDIR: nothing matches.',CR,LF,'$'
 
-MUSAGE: DB      CR,LF,'FUJIDIR v1.1 -- list a directory through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIDIR v1.3 -- list a directory through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIDIR N:<url>',CR,LF,CR,LF
         DB      'Example',CR,LF
         DB      '   FUJIDIR N1:TNFS://192.168.1.5/',CR,LF,'$'
 
 ;---- Variables ---------------------------------------------------------
-SPEC:   DS      SPECLEN
+SPEC:     DS    SPECLEN
+PARENT:   DS    SPECLEN
+PROBESPC: DS    SPECLEN
+SRCPTR:   DS    2
+PVALID:   DS    1
+TOCNT:  DS      1
 REQLEN: DS      2
 ANYOUT: DS      1
 LINELEN:DS      1

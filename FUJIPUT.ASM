@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIPUT.COM v1.1 -- send a file through FujiNet's N: network device.
+; FUJIPUT.COM v1.3 -- send a file through FujiNet's N: network device.
 ;
 ;       FUJIPUT file.ext N:<url> [B|T]     e.g.  FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 ;
@@ -32,6 +32,26 @@
 ; TCP:// stream has no file to find, so the probe just NAKs there and
 ; nothing is asked, same as "not present".
 ;
+; If the real write-mode OPEN fails anyway (the target wasn't found by
+; the probe above, or the user said Replace and it failed regardless),
+; FujiNet's NAK carries no error detail at all (confirmed from firmware
+; source -- see Reference/fujinet/rs232-protocol.md and FUJIMKD.ASM's
+; header for the full explanation). Instead, probe the PARENT directory
+; (a directory-mode OPEN, WITH a trailing slash -- see the same
+; reference for why a bare last segment is a wildcard pattern, not an
+; exact check): if it exists, the failure is almost certainly a
+; permission/read-only restriction; if the parent doesn't exist either,
+; the path itself is bad. Same technique as FUJIMKD.ASM's DIAGN.
+;-----------------------------------------------------------------------
+; v1.3: RECVPK no longer waits forever for a reply. If FujiNet-PC never
+; answers at all -- its own connect attempt to a dead/unreachable
+; remote hanging, say -- the guest has no way to notice on its own
+; (there is no interrupt-driven timeout, no BDOS timer call used
+; anywhere in this program). RECVPK now gives up after a bounded
+; busy-wait (TOOUTR below) and reports it directly rather than hanging.
+; This budget is approximate and CPU-clock-speed-dependent, not a
+; calibrated number of seconds -- see TOOUTR's own comment.
+;-----------------------------------------------------------------------
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ;-----------------------------------------------------------------------
 ; Assemble it INSIDE the machine:
@@ -72,6 +92,14 @@ SIODT   EQU     13H
 SIORST  EQU     03H
 SIOCTL  EQU     15H
 
+;---- How long RECVPK waits for a reply before giving up -----------------
+; TOOUTR outer passes, each a full 16-bit busy-wait -- roughly 15-20
+; real seconds on a stock 2MHz Altair, but this is a rough CPU-cycle
+; count, not a calibrated timer: it scales with actual clock speed
+; (faster hardware times out sooner, slower hardware later). Raise or
+; lower it per your hardware if the default feels wrong.
+TOOUTR  EQU     10
+
 ;---- The FujiNet RS232 wire protocol (Reference/fujinet/rs232-protocol.md)
 NETDEV  EQU     71H
 CMDOPEN EQU     4FH
@@ -82,6 +110,11 @@ ACKCMD  EQU     06H
 ACCWR   EQU     08H             ; access mode: write only
 ACCRD   EQU     04H             ; access mode: read only (the probe)
 TRANONE EQU     00H             ; translation: none (binary)
+
+ACCDIR  EQU     06H             ; access mode: DIRECTORY -- the parent-
+                                ; directory diagnostic probe, post-failure
+DIRFRAW EQU     83H             ; "translation" byte repurposed as format:
+                                ; DIR_FORMAT::RAW
 
 SLPEND  EQU     0C0H
 SLPESC  EQU     0DBH
@@ -241,7 +274,36 @@ ABORT:  CALL    MKCLOSE
         CALL    SAYABRT
         JMP     0
 
-EFAIL:  CALL    SAYFAIL
+;-----------------------------------------------------------------------
+; EFAIL -- the real write-mode OPEN was NAK'd. Probe the PARENT
+; directory to guess why: if it exists, this is almost certainly
+; permission/read-only; if the parent doesn't exist either, the path
+; itself is bad. See this file's header for why it's only a guess.
+;-----------------------------------------------------------------------
+EFAIL:  CALL    MKPRNT
+        LDA     PVALID
+        ORA     A
+        JZ      DOSDEN          ; couldn't even determine a parent -- default
+
+        LXI     H,PARENT
+        SHLD    SRCPTR
+        CALL    MKDPROB
+        CALL    SENDPK
+        CALL    RECVPK
+        LDA     RXBUF+1
+
+        PUSH    PSW
+        CALL    MKCLOSE
+        CALL    SENDPK
+        CALL    RECVPK
+        POP     PSW
+
+        CPI     ACKCMD
+        JZ      DOSDEN          ; parent exists -- so it's permission/server-side
+        CALL    SAYBAD
+        JMP     0
+
+DOSDEN: CALL    SAYDEN
         JMP     0
 
 ENOCPM: CALL    SAYNOCPM
@@ -333,6 +395,95 @@ MKP1:   LDAX    D
         JNZ     MKP1
         LXI     D,TXBUF
         JMP     SETLEN
+
+;-----------------------------------------------------------------------
+; MKDPROB -- a directory-mode OPEN against whatever SRCPTR points at
+; (always PARENT here, which MKPRNT already guarantees ends in '/') --
+; the post-failure diagnostic probe. See Reference/fujinet/rs232-
+; protocol.md for why the trailing slash is mandatory.
+;-----------------------------------------------------------------------
+MKDPROB:LHLD    SRCPTR
+        XCHG                    ; DE = the string to embed
+        LXI     H,TXBUF
+        MVI     M,NETDEV
+        INX     H
+        MVI     M,CMDOPEN
+        INX     H
+        INX     H
+        INX     H
+        INX     H
+        MVI     M,2             ; descr: two 1-byte params
+        INX     H
+        MVI     M,ACCDIR
+        INX     H
+        MVI     M,DIRFRAW
+        INX     H
+MKD1:   LDAX    D
+        MOV     M,A
+        INX     H
+        INX     D
+        ORA     A
+        JNZ     MKD1
+        LXI     D,TXBUF
+        JMP     SETLEN
+
+;-----------------------------------------------------------------------
+; MKPRNT -- build PARENT (NUL-terminated) as the parent directory of
+; SPEC's path: strip one trailing '/' if present, then everything up to
+; and including the previous '/'. PVALID is set to 1 if a boundary was
+; found (PARENT is ready to use), 0 if not (caller should skip the
+; parent probe and default to "denied"). Identical to FUJIMKD.ASM's.
+;-----------------------------------------------------------------------
+MKPRNT: MVI     B,0FFH          ; B = index of the second-to-last '/' seen
+        MVI     C,0FFH          ; C = index of the last '/' seen
+        MVI     E,0             ; E = running index into SPEC
+        LXI     H,SPEC
+MPSCAN: MOV     A,M
+        ORA     A
+        JZ      MPDONE
+        CPI     '/'
+        JNZ     MPNEXT
+        MOV     B,C
+        MOV     C,E
+MPNEXT: INX     H
+        INR     E
+        JMP     MPSCAN
+
+MPDONE: MOV     A,C
+        CPI     0FFH
+        JZ      MPNONE          ; no '/' anywhere -- no parent determinable
+        DCR     E               ; E = index of the last real character
+        MOV     A,E
+        CMP     C
+        JNZ     MPGOTB          ; last char isn't a '/' -- boundary = C
+        MOV     A,B
+        CPI     0FFH
+        JZ      MPNONE          ; the only '/' was that trailing one
+        MOV     C,A             ; boundary = the second-to-last '/' instead
+
+MPGOTB: LXI     H,SPEC
+        LXI     D,PARENT
+        MOV     A,C
+        INR     A               ; bytes to copy = boundary+1 (keep the '/')
+        MOV     C,A
+MPCPY:  MOV     A,C
+        ORA     A
+        JZ      MPTERM
+        MOV     A,M
+        STAX    D
+        INX     H
+        INX     D
+        DCR     C
+        JMP     MPCPY
+MPTERM: XRA     A
+        STAX    D
+        MVI     A,1
+        STA     PVALID
+        RET
+
+MPNONE: XRA     A
+        STA     PVALID
+        RET
 
 ;-----------------------------------------------------------------------
 ; MKWRITE -- build a WRITE for WLEN bytes, copied from BUF. WLEN is
@@ -449,9 +600,35 @@ SPADV:  INX     H
 SP9:    MVI     A,SLPEND
         JMP     ACOUT
 
-RECVPK: CALL    ACIN
+;-----------------------------------------------------------------------
+; RECVPK -- waits for the reply's leading SLPEND sync byte with a
+; bounded busy-wait (TOOUTR outer passes x a full 16-bit inner
+; countdown): if nothing at all comes back, print MNORE and quit rather
+; than hang forever. Once the sync byte is seen, the rest of the packet
+; is read with no further timeout -- a stall mid-packet, after real
+; framing has started, is a different (and much rarer) failure than
+; "no response at all," and out of scope here.
+;-----------------------------------------------------------------------
+RECVPK: MVI     A,TOOUTR
+        STA     TOCNT
+RPSYNC: LXI     B,0
+RPWAIT: IN      SIOST
+        ANI     01H
+        JNZ     RPGOTB
+        DCX     B
+        MOV     A,B
+        ORA     C
+        JNZ     RPWAIT
+        LDA     TOCNT
+        DCR     A
+        STA     TOCNT
+        JNZ     RPSYNC
+        CALL    SAYNORE         ; gave up -- no reply at all
+        JMP     0
+
+RPGOTB: IN      SIODT
         CPI     SLPEND
-        JNZ     RECVPK
+        JNZ     RPSYNC          ; noise, not the sync byte -- keep waiting
         LXI     H,RXBUF
         LXI     B,0
 RP1:    CALL    ACIN
@@ -615,7 +792,15 @@ SAYOK:  LXI     D,MOK
         MVI     C,PRSTR
         JMP     BDOS
 
-SAYFAIL:LXI     D,MFAIL
+SAYNORE:LXI     D,MNORE
+        MVI     C,PRSTR
+        JMP     BDOS
+
+SAYDEN: LXI     D,MDENY
+        MVI     C,PRSTR
+        JMP     BDOS
+
+SAYBAD: LXI     D,MBADP
         MVI     C,PRSTR
         JMP     BDOS
 
@@ -695,7 +880,12 @@ EBADSW: LXI     D,MEBADSW
 MCONN:  DB      'FUJIPUT: opening $'
 MCRLF:  DB      CR,LF,'$'
 MOK:    DB      'Open OK. Sending...',CR,LF,'$'
-MFAIL:  DB      CR,LF,'FUJIPUT: open failed.',CR,LF,'$'
+MNORE:  DB      CR,LF,'FUJIPUT: destination server not'
+        DB      ' responding.',CR,LF,'$'
+MDENY:  DB      CR,LF,'FUJIPUT: denied (permission or server'
+        DB      ' restriction).',CR,LF,'$'
+MBADP:  DB      CR,LF,'FUJIPUT: failed -- parent path does not'
+        DB      ' exist.',CR,LF,'$'
 MABRT:  DB      CR,LF,'FUJIPUT: aborted.',CR,LF,'$'
 MNOCPM: DB      CR,LF,'FUJIPUT: no such CP/M file.',CR,LF,'$'
 MRECS:  DB      ' records sent.',CR,LF,'$'
@@ -705,7 +895,7 @@ MSKIP:  DB      CR,LF,'FUJIPUT: not sent.',CR,LF,'$'
 MEBADSW:DB      CR,LF,'FUJIPUT: the switch is B (every byte, the default) or'
         DB      ' T (stop at the first ^Z).',CR,LF,'$'
 
-MUSAGE: DB      CR,LF,'FUJIPUT v1.1 -- send a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIPUT v1.3 -- send a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIPUT file.ext N:<url> [B|T]',CR,LF,CR,LF
         DB      'Example',CR,LF
@@ -717,7 +907,11 @@ MUSAGE: DB      CR,LF,'FUJIPUT v1.1 -- send a file through FujiNet''s'
         DB      'anything binary.',CR,LF,'$'
 
 ;---- Variables ---------------------------------------------------------
-SPEC:   DS      SPECLEN
+SPEC:     DS    SPECLEN
+PARENT:   DS    SPECLEN
+SRCPTR:   DS    2
+PVALID:   DS    1
+TOCNT:  DS      1
 JUNK:   DS      JUNKLEN
 SWBUF:  DS      3
 MODE:   DS      1

@@ -21,8 +21,8 @@ FUJIMKD N:<url>                 create a directory,e.g. FUJIMKD N1:TNFS://192.16
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
-prints its own version when run with no arguments. Current versions: `FUJIGET` v1.1, `FUJIPUT`
-v1.1, `FUJIDIR` v1.1, `FUJIMKD` v1.0.
+prints its own version when run with no arguments. Current versions: `FUJIGET` v1.3, `FUJIPUT`
+v1.3, `FUJIDIR` v1.3, `FUJIMKD` v1.2.
 
 There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
 FujiNet's protocol supports both the same way it supports `MKDIR` — see "Known limitations"
@@ -42,8 +42,9 @@ this repo if you need it.
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
 build, talking to a local `tnfsd` test server, on **macOS**. `FUJIMKD` has additionally been
-verified against a real internet TNFS server. A real physical FujiNet RS232 adapter is
-expected shortly; this document doesn't cover real hardware yet, and **Windows/Linux
+verified against a real internet TNFS server (including its read-only mode — a `tnfsd -r`
+server correctly NAKs a create attempt with no crash or hang). A real physical FujiNet RS232
+adapter is expected shortly; this document doesn't cover real hardware yet, and **Windows/Linux
 instructions for the host side (FujiNet-PC) are not written yet either** — this project has
 only been run on macOS so far. Both are open follow-ups.
 
@@ -107,9 +108,26 @@ Setting up BoIPChannel: listening on localhost:1985
 That's your signal it's ready. Leave it running in its own terminal/process for the whole
 `altairsim` session.
 
+**Convenience launcher**: `altairsim/run-fujinet` in this repo is a small wrapper — drop it
+into your extracted FujiNet-PC directory and run `./run-fujinet -u 127.0.0.1:8005` instead of
+calling `./fujinet` directly. It just re-launches FujiNet-PC automatically if it exits with
+code 75 (`EX_TEMPFAIL`, "please retry") rather than leaving you to notice and restart it by
+hand. Not required — `./fujinet` on its own works fine — but one less thing to babysit during a
+long session.
+
 ---
 
 ## 2. Point altairsim at it
+
+**Already have a machine you like?** Skip to the `.toml` snippet below and adapt it. **Starting
+from scratch?** This repo's `altairsim/` folder has a ready-made `8800c.toml` plus two disk
+images (`CPM22-8MB-56K.DSK`, an 8MB CP/M 2.2 system disk; `BLANK-8MB.DSK`, an empty second
+drive) already wired up the way this section describes — `cd altairsim && altairsim 8800c.toml`
+(with FujiNet-PC already running per section 1) and you're at the `A>` prompt. The system disk
+ships with stock CP/M plus `altairsim`'s own Host Bridge tools (`R`/`W`/`HDIR`) and the
+`PCGET`/`PCPUT` reference utilities — deliberately **not** the `FUJIGET`/`FUJIPUT`/`FUJIDIR`/
+`FUJIMKD` tools themselves, so section 3 below is something you actually do, not something
+already done for you.
 
 `altairsim`'s serial boards can connect a unit to a raw TCP socket directly from your
 machine's `.toml` file — no code, no wrapper script. Your machine needs a 2SIO card (the
@@ -200,6 +218,13 @@ deletes an existing local file of the same name.
 If `file.ext` already exists locally, FUJIGET asks `HELLO.TXT exists. Replace? (Y/N)` before
 touching the network side at all — decline and nothing happens, on either side.
 
+If the network open fails, FUJIGET now tells you *which kind* of failure it probably was
+(FujiNet's reply itself carries no error detail, so this is a best-effort diagnosis, not
+something the server actually reported — see "Where the protocol details live" below):
+`not found on that remote server` (the URL's parent path exists, but the target doesn't — by
+far the most common cause) or `failed -- parent path does not exist` (not even the containing
+directory is there).
+
 ### FUJIPUT — push a file up
 
 ```
@@ -227,6 +252,12 @@ that padding on the way out:
   binary file that happens to contain a real `1AH` byte partway through — which is why it
   isn't the default.
 
+If the write-mode open fails (after the overwrite check above has already been answered, or
+found nothing to ask about), FUJIPUT diagnoses it the same best-effort way FUJIMKD does:
+`denied (permission or server restriction)` if the parent path checks out — creating/writing
+was expected to just work — or `failed -- parent path does not exist` if the parent isn't
+there either.
+
 ### FUJIDIR — list a directory
 
 ```
@@ -239,7 +270,14 @@ above that); subdirectories are marked with a trailing `/` and no size (FujiNet 
 one for directories too, but it's a meaningless placeholder, so FUJIDIR drops it). Works for
 any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) — e.g.
 `FUJIDIR N1:TNFS://192.168.1.5/` lists the TNFS server's root,
-`FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory.
+`FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory. A trailing slash on the
+target is optional as of v1.2 — FUJIDIR adds one internally before opening if you leave it off
+(earlier versions needed it typed explicitly, or risked listing the *parent* directory's
+matching entries instead of the subdirectory you meant).
+
+If the open fails, FUJIDIR reports `not found on that remote server` (the parent path exists,
+the target doesn't) or `failed -- parent path does not exist` (same best-effort diagnosis as
+FUJIGET, for the same reason — see that section above).
 
 ### FUJIMKD — create a directory
 
@@ -247,12 +285,29 @@ any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) �
 FUJIMKD N:<url>
 ```
 
-Sends a single request to create `<url>` as a directory and reports `directory created.` or
-`failed` (already exists, bad path, read-only server — FujiNet's ACK/NAK reply carries no
-further detail than that). One request, one reply — no file I/O, no persistent connection.
-Works for any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SD, etc.); not
-meaningful for a raw `TCP://` stream. There's no corresponding delete/remove tool — see
-"Known limitations" below.
+Checks whether `<url>` already exists first (a non-destructive read-only probe — nothing is
+touched on the remote by the check itself). If it's already there, FUJIMKD asks
+`<url> already exists. Create anyway? (Y/N)` before trying anyway; decline and nothing is
+attempted. Otherwise it sends a single request to create `<url>` and reports
+`directory created.` or diagnoses the failure: `denied (permission or server restriction)` if
+the parent path checks out, or `failed -- parent path does not exist` if it doesn't (same
+best-effort reasoning as `FUJIPUT`'s write-failure diagnosis above — FujiNet's reply carries no
+error detail of its own). One request, one reply beyond the existence check — no file I/O, no
+persistent connection. Works for any URL scheme FujiNet's `N:` device treats as a filesystem
+(TNFS, SD, etc.); not meaningful for a raw `TCP://` stream. There's no corresponding
+delete/remove tool — see "Known limitations" below.
+
+### If FujiNet-PC never answers at all
+
+All four tools now give up after a bounded wait rather than hanging forever if nothing comes
+back — `<TOOL>: destination server not responding.` This covers FujiNet-PC itself going
+unreachable (crashed, or its own connect attempt to a dead remote hanging indefinitely), not a
+normal ACK/NAK reply. The wait is a busy-wait loop, not a real timer (CP/M 2.2 has no
+general-purpose one, and none of these programs use a BDOS timer call), so how long it actually
+takes depends on your hardware's clock speed — roughly 15-20 real seconds on a stock 2MHz
+Altair. Each `.ASM`'s `TOOUTR` constant, right next to the port equates, controls it — raise or
+lower it if the default feels wrong for your setup. A reply that starts arriving is trusted to
+finish; only complete silence triggers this.
 
 ### A worked example, start to finish
 
@@ -334,6 +389,14 @@ needs — the two bits at the bottom select the clock divide, the next three sel
 and the top three control RTS and the two interrupt-enable bits; any 6850 datasheet has the
 full table.
 
+### 3. The response-timeout budget
+
+Also worth knowing about while you're in there: `TOOUTR`, near the port equates, controls how
+long each program waits for a reply before reporting `destination server not responding` (see
+section 4 above) — it's a busy-wait iteration count, not a real timer, so it scales with your
+actual CPU clock speed. Slower or faster than a stock 2MHz Altair, adjust it; not something
+you're likely to need to touch otherwise.
+
 ---
 
 ## 6. Testing without a real network host
@@ -357,6 +420,11 @@ everything above works identically against `127.0.0.1` as it would against a rea
 
 ## Known limitations
 
+- **Failure messages ("not found," "denied," "parent path does not exist") are inferred, not
+  server-reported.** FujiNet's NAK carries no error detail at all for any of these commands
+  (confirmed from `fujinet-firmware` source), so each tool probes the parent directory after a
+  failure and guesses from that — a strong heuristic, not a guarantee. See `docs/rs232-
+  protocol.md` for the full reasoning.
 - **No delete/remove tools (`RMDIR`, file `DELETE`).** FujiNet's protocol supports both the
   same way it supports `MKDIR` (see `docs/rs232-protocol.md`), but they aren't implemented
   here — a deliberate choice, not a gap, to avoid shipping easy ways to destroy data on a

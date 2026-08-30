@@ -1,0 +1,85 @@
+# This is an 8800c configured for FujiNet software developmernt and testing
+# Nominal 64KB RAM 
+# Bootloader ROM @ 0xFF00
+#
+# It assumets the FujiNetPC virtual adapter is loaded and responding on port 1985
+#
+# Replace the listed disk images with whatever you need for your testing
+
+[machine]
+name     = "8800c"
+
+# Where to start execution the moment the machine is switched on
+
+startup = ["RUN FF00"]
+
+# The FRONT PANEL and the SENSE switches are on it 
+
+[[board]]
+type  = "fp"
+id    = "fp0"
+sense = 0x00
+
+# The CPU - MITS 88-CPU
+
+[[board]]
+type     = "8080"
+id       = "cpu0"
+clock_hz = 2000000
+idle     = false
+
+# The primary console - MITS 88-2SIO
+
+[[board]]
+type = "2sio"
+id   = "sio0"
+port = 10
+
+  [board.unit.a]
+  connect = "console"
+  baud    = 9600
+
+  [board.unit.b]
+  connect = "socket:localhost:1985"   # FujiNet-PC-RS232's BOIP port -- see fujinet-rs232/
+  baud    = 76800
+
+# The FLOPPY CONTROLLER -- an 88-DCDD at 0x08
+
+[[board]]
+type   = "dcdd"
+id     = "dsk0"
+port   = 08
+drives = 4
+
+  [[board.drive]]
+  unit     = 0
+  mount    = "CPM22-8MB-56K.DSK"
+
+  [[board.drive]]
+  unit     = 1
+  mount    = "BLANK-8MB.DSK"
+
+# The HOST BRIDGE -- the one card in this machine that MITS never made
+
+[[board]]
+type    = "hostbridge"
+id      = "hb0"
+port    = B0
+hostdir = ""                  # the shell's working directory
+
+# And some RAM/ROM space
+
+[[board]]
+type = "memory"
+id   = "mem0"
+fill = "random"               # real static RAM does not come up zeroed
+
+  [[board.region]]
+  type = "ram"
+  at   = 0000
+  size = "56K"                # 0000-F7FF
+
+  [[board.region]]
+  type  = "rom"
+  at    = FF00
+  mount = "builtin:dbl"

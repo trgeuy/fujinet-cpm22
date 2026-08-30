@@ -183,6 +183,41 @@ freshly-instantiated protocol object `process_fs` leaves behind.
 decision (not building destructive-by-default tools into this suite for now), unrelated to
 protocol-readiness. See [[feedback_fujinet_no_delete_tools]] if picking this back up later.
 
+## Verified live (2026-08-30) — DIRECTORY-mode `OPEN` is a wildcard-pattern list, NOT an
+## exact-path existence check
+
+Discovered building `FUJIMKD`'s "already exists" pre-check: a naive assumption that a
+DIRECTORY-mode (`$06`) `OPEN` against `.../PARENT/NAME` (no trailing slash) would ACK iff
+`NAME` exists inside `PARENT` is **wrong**. Confirmed directly from a local `tnfsd`'s own log:
+
+```
+opendirx: diropt=0x00, sortopt=0x00, max=0x0000, pat="NEWDIR", path="/"
+Pattern match: ".DS_Store", "NEWDIR" = FALSE
+Pattern match: "HELLO.TXT", "NEWDIR" = FALSE
+opendirx response: handle=0, count=2
+```
+
+The bare last path segment (`NEWDIR`) is treated as a **wildcard pattern** to filter a listing
+of the *parent* (`/`), not as a specific name to test for existence — and the `OPEN` itself
+ACKs as long as that listing is non-empty, **regardless of whether anything actually matched
+the pattern**. So `.../PARENT/NAME` ACKs whenever `PARENT` merely has *any* entries at all,
+even if `NAME` itself doesn't exist — a false positive for any non-empty directory.
+
+**The fix**: probe with a trailing slash — `.../PARENT/NAME/` — which asks "does this exact
+path open as a directory" with no pattern-filtering involved (this is exactly the form
+`FUJIDIR`'s own documented usage already uses, and matches its already-verified behavior:
+ACKs for an existing directory, even an empty one; NAKs cleanly for a nonexistent one — see
+the `NOWHERE/` test in this project's history). Confirmed working correctly in `FUJIMKD.ASM`'s
+`MKPRBS` routine, which appends a trailing `/` to the probe target before sending it.
+
+**How to apply**: any future tool that wants to check "does this exact path exist" via
+DIRECTORY-mode `OPEN` MUST include a trailing slash on the probed path. Without one, the
+result only reliably means "the parent directory of this path is non-empty" — not what you
+probably want. Plain read-mode (`$04`) `OPEN` as used by `FUJIGET`/`FUJIPUT`'s existing
+overwrite-check doesn't have this problem (no pattern semantics), but is only meaningful for
+files, not directories — opening a directory path in plain read mode is a different, untested
+code path, not a substitute for the DIRECTORY-mode-with-trailing-slash technique above.
+
 ## Remaining gap
 
 **`FUJICMD_MOUNT_HOST` / `MOUNT_IMAGE` payload shape** — not traced or tested. Check
