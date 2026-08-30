@@ -1,6 +1,6 @@
 # FujiNet for CP/M on altairsim
 
-Three small CP/M utilities that give a CP/M machine running under
+Four small CP/M utilities that give a CP/M machine running under
 [`altairsim`](https://github.com/deltecent/altairsim) access to FujiNet's `N:` network device —
 file transfer and directory listing over TCP, HTTP, TNFS, and anything else FujiNet's network
 protocol layer understands. Modeled on Mike Douglas's classic
@@ -17,13 +17,18 @@ real or emulated, which is why FUJIGET/FUJIPUT follow that lineage instead.)
 FUJIGET N:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/
+FUJIMKD N:<url>                 create a directory,e.g. FUJIMKD N1:TNFS://192.168.1.5/NEWDIR
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
 prints its own version when run with no arguments. Current versions: `FUJIGET` v1.1, `FUJIPUT`
-v1.1, `FUJIDIR` v1.1.
+v1.1, `FUJIDIR` v1.1, `FUJIMKD` v1.0.
 
-This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
+There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
+FujiNet's protocol supports both the same way it supports `MKDIR` — see "Known limitations"
+below.
+
+This folder has all four programs ready to run (`.COM`) and their assembly source (`.ASM`).
 No cross-assembler is used anywhere in this project — these were built by CP/M's own
 `ASM.COM`/`LOAD.COM`, running inside the emulated machine.
 
@@ -36,10 +41,11 @@ this repo if you need it.
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
-build, talking to a local `tnfsd` test server, on **macOS**. A real physical FujiNet RS232
-adapter is expected shortly; this document doesn't cover real hardware yet, and **Windows/
-Linux instructions for the host side (FujiNet-PC) are not written yet either** — this project
-has only been run on macOS so far. Both are open follow-ups.
+build, talking to a local `tnfsd` test server, on **macOS**. `FUJIMKD` has additionally been
+verified against a real internet TNFS server. A real physical FujiNet RS232 adapter is
+expected shortly; this document doesn't cover real hardware yet, and **Windows/Linux
+instructions for the host side (FujiNet-PC) are not written yet either** — this project has
+only been run on macOS so far. Both are open follow-ups.
 
 ---
 
@@ -160,8 +166,8 @@ CP/M 2.2 system:
    terminals set), then send `FUJIGET.HEX` as plain ASCII text. When it's done, type Ctrl-Z to
    signal end-of-file; PIP returns to the prompt.
 3. `A>LOAD FUJIGET` — this reads `FUJIGET.HEX` and writes `FUJIGET.COM`, ready to run.
-4. Repeat for `FUJIPUT.HEX` and `FUJIDIR.HEX` (or skip whichever you don't need). If you also
-   want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
+4. Repeat for `FUJIPUT.HEX`, `FUJIDIR.HEX`, and `FUJIMKD.HEX` (or skip whichever you don't
+   need). If you also want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
 
 **To rebuild from source** instead of using the provided `.HEX`/`.COM`: get the `.ASM` onto the
 disk the same paced-paste way (`PIP FUJIGET.ASM=CON:[H]`), then `ASM FUJIGET` (produces a fresh
@@ -235,6 +241,19 @@ any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) �
 `FUJIDIR N1:TNFS://192.168.1.5/` lists the TNFS server's root,
 `FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory.
 
+### FUJIMKD — create a directory
+
+```
+FUJIMKD N:<url>
+```
+
+Sends a single request to create `<url>` as a directory and reports `directory created.` or
+`failed` (already exists, bad path, read-only server — FujiNet's ACK/NAK reply carries no
+further detail than that). One request, one reply — no file I/O, no persistent connection.
+Works for any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SD, etc.); not
+meaningful for a raw `TCP://` stream. There's no corresponding delete/remove tool — see
+"Known limitations" below.
+
 ### A worked example, start to finish
 
 ```
@@ -259,7 +278,7 @@ Open OK. Sending...
 
 ## 5. Adapting to different hardware
 
-All three of these programs (and `testing/NC.ASM`) talk **directly to I/O ports**, with no BDOS or BIOS
+All four of these programs (and `testing/NC.ASM`) talk **directly to I/O ports**, with no BDOS or BIOS
 indirection in between. That's deliberate, not an oversight: CP/M's BDOS console calls are
 wired to the one `CON:` device only, so there's no BDOS console call that reaches a *second*
 serial line.
@@ -338,6 +357,10 @@ everything above works identically against `127.0.0.1` as it would against a rea
 
 ## Known limitations
 
+- **No delete/remove tools (`RMDIR`, file `DELETE`).** FujiNet's protocol supports both the
+  same way it supports `MKDIR` (see `docs/rs232-protocol.md`), but they aren't implemented
+  here — a deliberate choice, not a gap, to avoid shipping easy ways to destroy data on a
+  remote server you may not control.
 - **The upstream `fnTcpClient` idle-disconnect bug** (confirmed in `fujinet-firmware`'s
   source: a non-blocking `recv(MSG_PEEK)` returning 0 is misread as "connection closed," which
   can happen to a perfectly healthy but momentarily quiet TCP connection). This affects raw
@@ -348,7 +371,7 @@ everything above works identically against `127.0.0.1` as it would against a rea
 - **Disk mounting** (`FUJICMD_MOUNT_HOST`/`MOUNT_IMAGE`, i.e. making a remote disk image appear
   as a real CP/M drive letter) is not implemented and not planned for now — it would need a
   new CP/M BIOS driver speaking a completely separate, Atari-SIO-flavored sector protocol
-  (`DISKCMD_*`), a much bigger undertaking than these three utilities, and untested at the
+  (`DISKCMD_*`), a much bigger undertaking than these four utilities, and untested at the
   protocol level besides. The simple workaround already available: `FUJIGET` a `.DSK` image
   down to the host machine and point `altairsim`'s own disk board at it directly.
 - **Windows and Linux instructions for FujiNet-PC** are not written yet (see the top of this

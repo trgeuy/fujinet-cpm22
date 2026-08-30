@@ -145,6 +145,44 @@ open read-only first, ACK/NAK tells you existence, close, then open for real. Th
 answers "does a file/URL exist" for backends where read-open has that meaning (TNFS, SD,
 HTTP GET); it says nothing for a raw `TCP://` stream, which has no file-existence concept.
 
+## Traced from source, then verified live (2026-08-30) — `NETCMD_MKDIR`/`RMDIR` payload shape
+
+Traced directly from `lib/device/rs232/network.cpp` (`rs232Network::process_fs`,
+`create_devicespec`) on GitHub — same code path handles `NET_MKDIR`, `NET_RMDIR`,
+`NET_RENAME`, `NET_DELETE`, `NET_LOCK`, `NET_UNLOCK`, so this shape applies to all of them, not
+just MKDIR:
+
+- **Payload = the device-spec string, NUL-terminated, WITH the `Nx:` channel prefix** —
+  identical convention to `NETCMD_OPEN`'s payload (`create_devicespec` calls the exact same
+  `SYSTEM_BUS.transaction_get(devicespecBuf, ...)` read used by open). E.g. a create-folder
+  call would send `b"N1:TNFS://host/newfolder\x00"` as the packet payload with command byte
+  `NET_MKDIR` (`0x2A`).
+- **Params: 0 or 1**, unlike OPEN's fixed 2 — `process_fs` reads `param(0)` as an access mode
+  only `if packet.paramCount() > 0`, defaulting to `0` otherwise. Untested whether a real
+  client needs to supply it; sending zero params is plausible.
+- Each of these commands re-parses its own devicespec into a fresh protocol instance (closing
+  any protocol left open by a prior `OPEN`) — they are not scoped to an already-open channel,
+  so no prior `OPEN` is required before calling `MKDIR`.
+- The actual directory creation is `fs->mkdir(url)` — routed through whichever
+  `NetworkProtocolFS`-derived backend the URL scheme resolves to (TNFS, SD, etc; NOT valid for
+  a raw `TCP://` stream, which isn't a filesystem protocol). Returns `FUJI_ERROR::NONE` on
+  success → `transaction_success()`; anything else → `transaction_error()` (no further error
+  detail beyond the generic ACK/NAK envelope from this code path alone).
+
+**Confirmed live, same day, `CPM Tools/FUJIMKD.ASM`/`.COM`**: 0 params, NUL-terminated
+`Nx:`-prefixed devicespec payload, exactly as traced above — no access-mode param needed.
+Tested against local `tnfsd` (create → ACK; duplicate create → clean NAK; nested subdirectory
+create → ACK, all confirmed at the actual filesystem level under `tnfsd/share/`, not just via
+`FUJIDIR`) and against a real internet TNFS server, `tnfs.mitsaltair.com` (same create/
+duplicate-NAK behavior, confirmed via `FUJIDIR` listing afterward). `FUJIMKD` sends a `CLOSE`
+after the `MKDIR` request even though no persistent channel was opened — `rs232_close()`
+gracefully no-ops when `protocol` is null, so this is safe either way and cleans up the
+freshly-instantiated protocol object `process_fs` leaves behind.
+
+**Deliberately not built**: `RMDIR`/`DELETE` CP/M tools — a scoped, user-requested safety
+decision (not building destructive-by-default tools into this suite for now), unrelated to
+protocol-readiness. See [[feedback_fujinet_no_delete_tools]] if picking this back up later.
+
 ## Remaining gap
 
 **`FUJICMD_MOUNT_HOST` / `MOUNT_IMAGE` payload shape** — not traced or tested. Check
