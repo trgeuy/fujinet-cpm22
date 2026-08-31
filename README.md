@@ -43,15 +43,24 @@ launcher script — see sections 1 and 2 below) is only useful if you're actuall
 `altairsim` itself, so it isn't in the packaged release either — get it from
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/altairsim> if you want it.
 
+Same treatment for `tnfsd-server-setup/`: a step-by-step for standing up your own `tnfsd` with
+a classic anonymous-FTP layout (read-only content folders plus a genuinely write-only incoming
+folder, all on plain Unix permissions — no `tnfsd` patch needed). Only useful if you're running
+a server, not a client, so it's repo-only too — see
+<https://github.com/trgeuy/fujinet-cpm22/tree/main/tnfsd-server-setup>.
+
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
 build, talking to a local `tnfsd` test server, on **macOS**. `FUJIMKD` has additionally been
 verified against a real internet TNFS server (including its read-only mode — a `tnfsd -r`
-server correctly NAKs a create attempt with no crash or hang). A real physical FujiNet RS232
-adapter is expected shortly; this document doesn't cover real hardware yet, and **Windows/Linux
-instructions for the host side (FujiNet-PC) are not written yet either** — this project has
-only been run on macOS so far. Both are open follow-ups.
+server correctly NAKs a create attempt with no crash or hang), and all four tools have been
+verified end to end against a real `tnfsd` running on actual Raspberry Pi hardware over a real
+LAN, including the mixed read-only/write-only permission layout described in
+`tnfsd-server-setup/`. A real physical FujiNet RS232 adapter is expected shortly; this document
+doesn't cover real hardware on the CP/M side yet, and **Windows/Linux instructions for the host
+side (FujiNet-PC) are not written yet either** — this project has only run FujiNet-PC on macOS
+so far. Both are open follow-ups.
 
 ---
 
@@ -420,6 +429,12 @@ test server works fine, and is what these tools were actually verified against:
 
 That's it — FujiNet-PC talks to `tnfsd` the same way it'd talk to any real TNFS server, so
 everything above works identically against `127.0.0.1` as it would against a real remote host.
+
+**Want to run a real server with mixed read-only/write-only folders** (an "upload here, browse
+there" layout, like an old-school anonymous FTP site)? See `tnfsd-server-setup/` in this repo —
+covers building `tnfsd` from source on a Raspberry Pi/Linux box, the exact permission bits and
+`UMask` setting that make a folder genuinely write-only (not just unlisted), and a real CP/M-side
+gotcha (command-line case-folding) that will otherwise make lowercase server paths unreachable.
 
 ---
 
