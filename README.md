@@ -22,7 +22,7 @@ FUJIMKD N:<url>                 create a directory,e.g. FUJIMKD N1:TNFS://192.16
 
 Each tool is versioned independently (they change on their own schedule, not together) and
 prints its own version when run with no arguments. Current versions: `FUJIGET` v1.3, `FUJIPUT`
-v1.3, `FUJIDIR` v1.3, `FUJIMKD` v1.2.
+v1.3, `FUJIDIR` v1.4, `FUJIMKD` v1.2.
 
 There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
 FujiNet's protocol supports both the same way it supports `MKDIR` — see "Known limitations"
@@ -281,7 +281,9 @@ FUJIDIR N:<url>
 Opens `<url>` in FujiNet's directory-listing mode and prints what comes back: one entry per
 line. Files get a right-justified size column (plain bytes under 1K, `NNNNK` up to 1MB, `N.NM`
 above that); subdirectories are marked with a trailing `/` and no size (FujiNet always reports
-one for directories too, but it's a meaningless placeholder, so FUJIDIR drops it). Works for
+one for directories too, but it's a meaningless placeholder, so FUJIDIR drops it). Since a bare
+number and a `K`/`M`-suffixed one look inconsistent side by side with no label, v1.4 prints a
+one-line reminder of what the column means right before the listing starts. Works for
 any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) — e.g.
 `FUJIDIR N1:TNFS://192.168.1.5/` lists the TNFS server's root,
 `FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory. A trailing slash on the
