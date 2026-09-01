@@ -61,10 +61,10 @@ Two settings worth knowing about while you're in there:
   *embedded* CP/M emulator (for an entirely different kind of client, an 8-bit machine dialing
   in as a dumb terminal). It has nothing to do with a real CP/M machine acting as the client,
   which is what this whole project is. Leave it at its default; it doesn't affect FUJIGET/
-  FUJIPUT/FUJIDIR/FUJIMKD either way.
+  FUJIPUT/FUJIDIR either way.
 - **`[Host1]`–`[Host4]`** are FujiNet's own "Host Slots" — the thing DOS's `CONFIG.EXE`/
   `FMOUNT` mount disk images from. **The CP/M tool suite in this repo doesn't use them at
-  all** — `FUJIGET`/`FUJIPUT`/`FUJIDIR`/`FUJIMKD` all take a full `N1:TNFS://host/path`-style
+  all** — `FUJIGET`/`FUJIPUT`/`FUJIDIR` all take a full `N1:TNFS://host/path`-style
   URL directly, bypassing host slots entirely. They're harmless to leave at their defaults;
   they only matter if you also intend to use FujiNet's own web UI for disk-image browsing.
 

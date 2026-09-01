@@ -4,7 +4,7 @@ This is a step-by-step for standing up a `tnfsd` server with the classic anonymo
 one or more **read-only** folders for content you want to share, and an **incoming** folder
 that's genuinely **write-only** — clients can drop files in, but can't list what's there or read
 anything back, including their own upload. Tested on a Raspberry Pi (Raspberry Pi OS / Debian
-"trixie", armhf) talking to real CP/M over `FUJIGET`/`FUJIPUT`/`FUJIDIR`/`FUJIMKD` through
+"trixie", armhf) talking to real CP/M over `FUJIGET`/`FUJIPUT`/`FUJIDIR` through
 `fujinet-rs232`'s BOIP bridge.
 
 Not included in the packaged release — like `altairsim/` and `testing/`, this is only useful if
@@ -148,8 +148,8 @@ thing that actually exposes it.
 
 ### Fixing it automatically: a cron job that enforces uppercase names
 
-Anything that reaches `/tnfs` through `FUJIPUT`/`FUJIMKD` is already safe — the CCP uppercases
-the whole command tail before those tools ever see it, so client uploads can't create a
+Anything that reaches `/tnfs` through `FUJIPUT` is already safe — the CCP uppercases
+the whole command tail before it ever sees it, so client uploads can't create a
 lowercase name in the first place. The actual risk is content added **directly on the server**
 by an admin — `scp`, `rsync`, unpacking a `.tar.gz` of retro software, etc. — which routinely
 uses lowercase or mixed-case names and would otherwise be silently unreachable from CP/M forever
@@ -208,7 +208,6 @@ FUJIDIR N1:TNFS://<host>/            -> lists INCOMING/ and PUB/
 FUJIDIR N1:TNFS://<host>/PUB/        -> lists whatever you've put there
 FUJIGET N1:TNFS://<host>/PUB/<file> local.txt   -> succeeds
 FUJIPUT local.txt N1:TNFS://<host>/PUB/x.txt    -> denied
-FUJIMKD N1:TNFS://<host>/PUB/x/                 -> denied
 FUJIPUT local.txt N1:TNFS://<host>/INCOMING/x.txt -> succeeds
 FUJIDIR N1:TNFS://<host>/INCOMING/              -> fails (unlisted)
 FUJIGET N1:TNFS://<host>/INCOMING/x.txt out.txt -> fails (unreadable)
