@@ -1,6 +1,6 @@
 # FujiNet for CP/M on altairsim
 
-Four small CP/M utilities that give a CP/M machine running under
+Three small CP/M utilities that give a CP/M machine running under
 [`altairsim`](https://github.com/deltecent/altairsim) access to FujiNet's `N:` network device —
 file transfer and directory listing over TCP, HTTP, TNFS, and anything else FujiNet's network
 protocol layer understands. Modeled on Mike Douglas's classic
@@ -17,18 +17,16 @@ real or emulated, which is why FUJIGET/FUJIPUT follow that lineage instead.)
 FUJIGET N:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/
-FUJIMKD N:<url>                 create a directory,e.g. FUJIMKD N1:TNFS://192.168.1.5/NEWDIR
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
 prints its own version when run with no arguments. Current versions: `FUJIGET` v1.4, `FUJIPUT`
-v1.4, `FUJIDIR` v1.5, `FUJIMKD` v1.2.
+v1.4, `FUJIDIR` v1.5.
 
 There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
-FujiNet's protocol supports both the same way it supports `MKDIR` — see "Known limitations"
-below.
+FujiNet's protocol supports both — see "Known limitations" below.
 
-This folder has all four programs ready to run (`.COM`) and their assembly source (`.ASM`).
+This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
 No cross-assembler is used anywhere in this project — these were built by CP/M's own
 `ASM.COM`/`LOAD.COM`, running inside the emulated machine.
 
@@ -57,12 +55,10 @@ see <https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232>.
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
-build, talking to a local `tnfsd` test server, on **macOS**. `FUJIMKD` has additionally been
-verified against a real internet TNFS server (including its read-only mode — a `tnfsd -r`
-server correctly NAKs a create attempt with no crash or hang), and all four tools have been
+build, talking to a local `tnfsd` test server, on **macOS**, and all three tools have been
 verified end to end against a real `tnfsd` running on actual Raspberry Pi hardware over a real
 LAN, including the mixed read-only/write-only permission layout described in
-`tnfsd-server-setup/`. **All four tools have also now been verified on a real physical FujiNet
+`tnfsd-server-setup/`. **All three tools have also now been verified on a real physical FujiNet
 RS232 adapter on a real Altair 8800c** — see `fujinet-rs232/` for bring-up instructions.
 **Windows/Linux instructions for the emulator host side (FujiNet-PC) are not written yet** —
 this project has only run FujiNet-PC on macOS so far. That's the one remaining open follow-up.
@@ -151,8 +147,8 @@ images (`CPM22-8MB-56K.DSK`, an 8MB CP/M 2.2 system disk; `BLANK-8MB.DSK`, an em
 drive) already wired up the way this section describes — `cd altairsim && altairsim 8800c.toml`
 (with FujiNet-PC already running per section 1) and you're at the `A>` prompt. The system disk
 ships with stock CP/M plus `altairsim`'s own Host Bridge tools (`R`/`W`/`HDIR`) and the
-`PCGET`/`PCPUT` reference utilities — deliberately **not** the `FUJIGET`/`FUJIPUT`/`FUJIDIR`/
-`FUJIMKD` tools themselves, so section 3 below is something you actually do, not something
+`PCGET`/`PCPUT` reference utilities — deliberately **not** the `FUJIGET`/`FUJIPUT`/`FUJIDIR`
+tools themselves, so section 3 below is something you actually do, not something
 already done for you.
 
 `altairsim`'s serial boards can connect a unit to a raw TCP socket directly from your
@@ -210,8 +206,8 @@ CP/M 2.2 system:
    terminals set), then send `FUJIGET.HEX` as plain ASCII text. When it's done, type Ctrl-Z to
    signal end-of-file; PIP returns to the prompt.
 3. `A>LOAD FUJIGET` — this reads `FUJIGET.HEX` and writes `FUJIGET.COM`, ready to run.
-4. Repeat for `FUJIPUT.HEX`, `FUJIDIR.HEX`, and `FUJIMKD.HEX` (or skip whichever you don't
-   need). If you also want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
+4. Repeat for `FUJIPUT.HEX` and `FUJIDIR.HEX` (or skip whichever you don't need). If you also
+   want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
 
 **To rebuild from source** instead of using the provided `.HEX`/`.COM`: get the `.ASM` onto the
 disk the same paced-paste way (`PIP FUJIGET.ASM=CON:[H]`), then `ASM FUJIGET` (produces a fresh
@@ -299,10 +295,10 @@ As of v1.4, FUJIPUT prints `Sent NNNN KB...` in place the same way FUJIGET does 
 once every 1KB sent.
 
 If the write-mode open fails (after the overwrite check above has already been answered, or
-found nothing to ask about), FUJIPUT diagnoses it the same best-effort way FUJIMKD does:
-`denied (permission or server restriction)` if the parent path checks out — creating/writing
-was expected to just work — or `failed -- parent path does not exist` if the parent isn't
-there either.
+found nothing to ask about), FUJIPUT diagnoses it the same best-effort way (see "Where the
+protocol details live" below): `denied (permission or server restriction)` if the parent path
+checks out — creating/writing was expected to just work — or `failed -- parent path does not
+exist` if the parent isn't there either.
 
 ### FUJIDIR — list a directory
 
@@ -328,27 +324,9 @@ If the open fails, FUJIDIR reports `not found on that remote server` (the parent
 the target doesn't) or `failed -- parent path does not exist` (same best-effort diagnosis as
 FUJIGET, for the same reason — see that section above).
 
-### FUJIMKD — create a directory
-
-```
-FUJIMKD N:<url>
-```
-
-Checks whether `<url>` already exists first (a non-destructive read-only probe — nothing is
-touched on the remote by the check itself). If it's already there, FUJIMKD asks
-`<url> already exists. Create anyway? (Y/N)` before trying anyway; decline and nothing is
-attempted. Otherwise it sends a single request to create `<url>` and reports
-`directory created.` or diagnoses the failure: `denied (permission or server restriction)` if
-the parent path checks out, or `failed -- parent path does not exist` if it doesn't (same
-best-effort reasoning as `FUJIPUT`'s write-failure diagnosis above — FujiNet's reply carries no
-error detail of its own). One request, one reply beyond the existence check — no file I/O, no
-persistent connection. Works for any URL scheme FujiNet's `N:` device treats as a filesystem
-(TNFS, SD, etc.); not meaningful for a raw `TCP://` stream. There's no corresponding
-delete/remove tool — see "Known limitations" below.
-
 ### If FujiNet-PC never answers at all
 
-All four tools now give up after a bounded wait rather than hanging forever if nothing comes
+All three tools now give up after a bounded wait rather than hanging forever if nothing comes
 back — `<TOOL>: destination server not responding.` This covers FujiNet-PC itself going
 unreachable (crashed, or its own connect attempt to a dead remote hanging indefinitely), not a
 normal ACK/NAK reply. The wait is a busy-wait loop, not a real timer (CP/M 2.2 has no
@@ -480,10 +458,9 @@ gotcha (command-line case-folding) that will otherwise make lowercase server pat
   (confirmed from `fujinet-firmware` source), so each tool probes the parent directory after a
   failure and guesses from that — a strong heuristic, not a guarantee. See `docs/rs232-
   protocol.md` for the full reasoning.
-- **No delete/remove tools (`RMDIR`, file `DELETE`).** FujiNet's protocol supports both the
-  same way it supports `MKDIR` (see `docs/rs232-protocol.md`), but they aren't implemented
-  here — a deliberate choice, not a gap, to avoid shipping easy ways to destroy data on a
-  remote server you may not control.
+- **No delete/remove tools (`RMDIR`, file `DELETE`).** FujiNet's protocol supports both
+  (see `docs/rs232-protocol.md`), but they aren't implemented here — a deliberate choice, not
+  a gap, to avoid shipping easy ways to destroy data on a remote server you may not control.
 - **The upstream `fnTcpClient` idle-disconnect bug** (confirmed in `fujinet-firmware`'s
   source: a non-blocking `recv(MSG_PEEK)` returning 0 is misread as "connection closed," which
   can happen to a perfectly healthy but momentarily quiet TCP connection). This affects raw

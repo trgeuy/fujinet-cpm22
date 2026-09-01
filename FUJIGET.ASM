@@ -33,12 +33,12 @@
 ;
 ; If the real OPEN fails, FujiNet's NAK carries no error detail at all
 ; (confirmed from firmware source -- see Reference/fujinet/rs232-
-; protocol.md and FUJIMKD.ASM's header for the full explanation).
+; protocol.md for the full explanation).
 ; Instead, probe the PARENT directory (a directory-mode OPEN, WITH a
 ; trailing slash -- see the same reference for why a bare last segment
 ; is a wildcard pattern, not an exact check): if it exists, the target
 ; almost certainly just isn't there (by far the most common reason a
-; GET fails -- unlike FUJIMKD/FUJIPUT, there's no "we're about to
+; GET fails -- unlike FUJIPUT, there's no "we're about to
 ; create something new" expectation here, so this is reported as "not
 ; found," not "denied"); if the parent doesn't exist either, the path
 ; itself is bad.
@@ -364,7 +364,7 @@ ABORT:  CALL    MKCLOSE
 ; why: if it exists, the target almost certainly just isn't there; if
 ; the parent doesn't exist either, the path itself is bad. See this
 ; file's header for why "not found" (not "denied") is the right default
-; here, unlike FUJIMKD/FUJIPUT.
+; here, unlike FUJIPUT.
 ;-----------------------------------------------------------------------
 EFAIL:  CALL    MKPRNT
         LDA     PVALID
@@ -504,7 +504,7 @@ MKD1:   LDAX    D
 ; SPEC's path: strip one trailing '/' if present, then everything up to
 ; and including the previous '/'. PVALID is set to 1 if a boundary was
 ; found (PARENT is ready to use), 0 if not (caller should skip the
-; parent probe and default to "not found"). Identical to FUJIMKD.ASM's.
+; parent probe and default to "not found").
 ;-----------------------------------------------------------------------
 MKPRNT: MVI     B,0FFH          ; B = index of the second-to-last '/' seen
         MVI     C,0FFH          ; C = index of the last '/' seen

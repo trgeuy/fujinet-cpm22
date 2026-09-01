@@ -38,11 +38,11 @@
 ;
 ; Also v1.2: if the real OPEN still fails after that fix, FujiNet's NAK
 ; carries no error detail at all (confirmed from firmware source -- see
-; FUJIMKD.ASM's header for the full explanation). Instead, probe the
-; PARENT directory (same MKOPEN, pointed at PARENT instead of PROBESPC
-; -- MKPRNT already guarantees PARENT ends in '/'): if it exists, the
-; target almost certainly just isn't there (reported as "not found,"
-; not "denied" -- unlike FUJIMKD/FUJIPUT, there's no "we're about to
+; Reference/fujinet/rs232-protocol.md for the full explanation). Instead,
+; probe the PARENT directory (same MKOPEN, pointed at PARENT instead of
+; PROBESPC -- MKPRNT already guarantees PARENT ends in '/'): if it exists,
+; the target almost certainly just isn't there (reported as "not found,"
+; not "denied" -- unlike FUJIPUT, there's no "we're about to
 ; create something new" expectation for a listing); if the parent
 ; doesn't exist either, the path itself is bad.
 ;-----------------------------------------------------------------------
@@ -426,7 +426,7 @@ MKB3:   INX     D
 ; SPEC's path: strip one trailing '/' if present, then everything up to
 ; and including the previous '/'. PVALID is set to 1 if a boundary was
 ; found (PARENT is ready to use), 0 if not (caller should skip the
-; parent probe and default to "not found"). Identical to FUJIMKD.ASM's.
+; parent probe and default to "not found").
 ;-----------------------------------------------------------------------
 MKPRNT: MVI     B,0FFH          ; B = index of the second-to-last '/' seen
         MVI     C,0FFH          ; C = index of the last '/' seen
