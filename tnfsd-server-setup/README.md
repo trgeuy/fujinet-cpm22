@@ -146,6 +146,45 @@ hostnames, dotted IP addresses, macOS's case-insensitive filesystem, retro-conve
 filenames) happened to be case-insensitive-safe. A lowercase Linux directory name is the first
 thing that actually exposes it.
 
+### Fixing it automatically: a cron job that enforces uppercase names
+
+Anything that reaches `/tnfs` through `FUJIPUT`/`FUJIMKD` is already safe — the CCP uppercases
+the whole command tail before those tools ever see it, so client uploads can't create a
+lowercase name in the first place. The actual risk is content added **directly on the server**
+by an admin — `scp`, `rsync`, unpacking a `.tar.gz` of retro software, etc. — which routinely
+uses lowercase or mixed-case names and would otherwise be silently unreachable from CP/M forever
+(there is no way to work around this from the CP/M side; see above).
+
+This directory includes `tnfs-case-fix.sh`, a small script that walks `/tnfs` and renames any
+lowercase name to uppercase, and `tnfs-case-fix.cron`, a `cron.d` entry that runs it every 15
+minutes. Install both:
+
+```
+sudo cp tnfs-case-fix.sh /usr/local/sbin/tnfs-case-fix.sh
+sudo chown root:root /usr/local/sbin/tnfs-case-fix.sh
+sudo chmod 755 /usr/local/sbin/tnfs-case-fix.sh
+sudo cp tnfs-case-fix.cron /etc/cron.d/tnfs-case-fix
+sudo chown root:root /etc/cron.d/tnfs-case-fix
+sudo chmod 644 /etc/cron.d/tnfs-case-fix
+sudo touch /var/log/tnfs-case-fix.log
+sudo chmod 644 /var/log/tnfs-case-fix.log
+```
+
+Notes:
+
+- **It has to run as root.** `PUB` is `0555` — nobody but root can rename an entry inside it,
+  including the `tnfs` user `tnfsd` itself runs as. The `cron.d` entry runs the script as
+  `root` for exactly this reason.
+- **It never overwrites.** If both `readme.txt` and `README.TXT` already exist in the same
+  folder, the script leaves both alone and logs a `SKIP (target exists)` line to
+  `/var/log/tnfs-case-fix.log` rather than guessing which one you meant to keep.
+- **It's bottom-up.** Nested directories get renamed after their contents, so a directory
+  rename never strands a path the script already queued for a file inside it.
+- Confirmed live: a `lowercase.txt` dropped straight into `PUB` on disk failed `FUJIGET`
+  (`not found on that remote server`, because the CCP requests `LOWERCASE.TXT`) until the
+  script ran, after which the identical `FUJIGET` succeeded and the fetched content matched
+  byte-for-byte.
+
 ## 5. A diagnostic-wording quirk worth knowing about
 
 Under this layout, `FUJIGET` against a file inside `INCOMING/` fails with:
