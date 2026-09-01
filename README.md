@@ -49,6 +49,11 @@ folder, all on plain Unix permissions — no `tnfsd` patch needed). Only useful 
 a server, not a client, so it's repo-only too — see
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/tnfsd-server-setup>.
 
+And for `fujinet-rs232/`: bringing up a **physical** FujiNet RS-232 adapter for CP/M — WiFi and
+serial-baud setup entirely via the adapter's own `fnconfig.ini`/web UI, since there's no
+`CONFIG.SYS`/`CONFIG.EXE` equivalent under CP/M. Repo-only, same reasoning as the other two —
+see <https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232>.
+
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
@@ -57,10 +62,17 @@ verified against a real internet TNFS server (including its read-only mode — a
 server correctly NAKs a create attempt with no crash or hang), and all four tools have been
 verified end to end against a real `tnfsd` running on actual Raspberry Pi hardware over a real
 LAN, including the mixed read-only/write-only permission layout described in
-`tnfsd-server-setup/`. A real physical FujiNet RS232 adapter is expected shortly; this document
-doesn't cover real hardware on the CP/M side yet, and **Windows/Linux instructions for the host
-side (FujiNet-PC) are not written yet either** — this project has only run FujiNet-PC on macOS
-so far. Both are open follow-ups.
+`tnfsd-server-setup/`. **All four tools have also now been verified on a real physical FujiNet
+RS232 adapter on a real Altair 8800c** — see `fujinet-rs232/` for bring-up instructions.
+**Windows/Linux instructions for the emulator host side (FujiNet-PC) are not written yet** —
+this project has only run FujiNet-PC on macOS so far. That's the one remaining open follow-up.
+
+**Have a physical FujiNet RS232 adapter instead of FujiNet-PC?** Sections 1-2 below are
+emulator-specific (installing FujiNet-PC, wiring `altairsim` to its BOIP port) — skip them.
+Go to [`fujinet-rs232/`](https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232) for
+the physical equivalent (WiFi/baud setup via the adapter's own `fnconfig.ini` and web UI), then
+come back to section 3 below — everything from there on (installing the tools, using them) is
+identical whether the other end of the serial line is FujiNet-PC or the real adapter.
 
 ---
 
@@ -215,6 +227,19 @@ line endings to CRLF on the host before transferring a modified `.ASM` (e.g. `se
 ---
 
 ## 4. Using the tools
+
+Everything below is identical whether the other end of the serial line is FujiNet-PC or a real
+physical FujiNet RS232 adapter — the tools talk to whatever `N:` resolves to over the wire,
+they have no idea which one it is. The only real-hardware difference worth knowing about:
+throughput is lower than the emulator's. Measured on a real Altair 8800c against a real FujiNet
+RS232 adapter at 38400 baud, a 92 KB file (`FUJIGET`) took roughly 2.6x longer per
+request/response cycle than the same transfer against FujiNet-PC, even to a server on the same
+LAN — most likely the real ESP32 firmware's own processing time, not a network effect. Expect
+real transfers to feel noticeably slower than the numbers you'd get testing against FujiNet-PC
+locally; that's normal, not a sign something's wrong. See
+[`fujinet-rs232/`](https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232) for
+physical bring-up and other real-hardware notes (pacing, no flow control on classic serial
+boards).
 
 ### FUJIGET — pull a file down
 
@@ -466,8 +491,6 @@ gotcha (command-line case-folding) that will otherwise make lowercase server pat
   down to the host machine and point `altairsim`'s own disk board at it directly.
 - **Windows and Linux instructions for FujiNet-PC** are not written yet (see the top of this
   document) — this project has only run on macOS so far.
-- **Real hardware** (a physical FujiNet RS232 adapter) hasn't been tested yet either — only
-  the emulated `fujinet-pc-RS232`.
 
 ## Where the protocol details live
 
