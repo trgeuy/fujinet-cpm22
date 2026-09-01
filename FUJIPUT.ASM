@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIPUT.COM v1.3 -- send a file through FujiNet's N: network device.
+; FUJIPUT.COM v1.4 -- send a file through FujiNet's N: network device.
 ;
 ;       FUJIPUT file.ext N:<url> [B|T]     e.g.  FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 ;
@@ -51,6 +51,14 @@
 ; busy-wait (TOOUTR below) and reports it directly rather than hanging.
 ; This budget is approximate and CPU-clock-speed-dependent, not a
 ; calibrated number of seconds -- see TOOUTR's own comment.
+;-----------------------------------------------------------------------
+; v1.4: a large transfer used to print nothing at all until the final
+; "NNN records sent," leaving no sign of life for however long that
+; took. Rather than a dot per 128-byte record (would scroll the screen
+; on anything but a small file), CPLOOP now prints "Sent NNNN KB..." in
+; place (a bare CR, no LF, so each update overwrites the last) once
+; every 8 records = 1024 bytes -- see PROGCK/SAYPROG below. Same
+; technique as FUJIGET.ASM v1.4; see that file for the fuller comment.
 ;-----------------------------------------------------------------------
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ;-----------------------------------------------------------------------
@@ -181,6 +189,7 @@ PABSENT:
 
         LXI     H,0
         SHLD    RECS
+        SHLD    KCNT            ; nothing reported to the user yet either
         XRA     A
         STA     LASTFLG
 
@@ -206,6 +215,7 @@ CPGO:   LXI     D,FCB
         LHLD    RECS            ; count it now -- T mode may stop partway
         INX     H               ; through this very record, and it was
         SHLD    RECS            ; still read
+        CALL    PROGCK          ; every 8th record (1KB): update the user
 
         LDA     MODE
         CPI     'T'
@@ -338,6 +348,39 @@ CKREPLACE:
 
         CALL    SAYSKIP
         JMP     0
+
+;-----------------------------------------------------------------------
+; PROGCK -- called after every record read. RECS just advanced, so its
+; low 3 bits are 0 exactly every 8th record (128*8 = 1024 bytes);
+; anything else, return immediately without touching KCNT or the screen.
+; On a hit, bump KCNT (the running KB count) and print it in place.
+;-----------------------------------------------------------------------
+PROGCK: LHLD    RECS
+        MOV     A,L
+        ANI     07H
+        RNZ
+        LHLD    KCNT
+        INX     H
+        SHLD    KCNT
+        JMP     SAYPROG
+
+;-----------------------------------------------------------------------
+; SAYPROG -- "\rSent NNNN KB..." with no trailing CR/LF, so the next call
+; overwrites this line instead of scrolling. KCNT only grows during one
+; run, so a shorter new number can never leave a stale digit behind from
+; a longer old one.
+;-----------------------------------------------------------------------
+SAYPROG:MVI     E,CR
+        MVI     C,CONOUT
+        CALL    BDOS
+        LXI     D,MPROGP
+        MVI     C,PRSTR
+        CALL    BDOS
+        LHLD    KCNT
+        CALL    PRDEC
+        LXI     D,MPROGS
+        MVI     C,PRSTR
+        JMP     BDOS
 
 ;=======================================================================
 ; BUILDING PACKETS -- see Reference/fujinet/rs232-protocol.md; identical
@@ -894,8 +937,10 @@ MEXIST2:DB      ' exists on the remote. Replace? (Y/N) $'
 MSKIP:  DB      CR,LF,'FUJIPUT: not sent.',CR,LF,'$'
 MEBADSW:DB      CR,LF,'FUJIPUT: the switch is B (every byte, the default) or'
         DB      ' T (stop at the first ^Z).',CR,LF,'$'
+MPROGP: DB      'Sent $'
+MPROGS: DB      ' KB...$'
 
-MUSAGE: DB      CR,LF,'FUJIPUT v1.3 -- send a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIPUT v1.4 -- send a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIPUT file.ext N:<url> [B|T]',CR,LF,CR,LF
         DB      'Example',CR,LF
@@ -918,6 +963,7 @@ MODE:   DS      1
 FCB:    DS      36
 BUF:    DS      RECLEN
 RECS:   DS      2
+KCNT:   DS      2
 WLEN:   DS      2
 LASTFLG:DS      1
 

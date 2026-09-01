@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIDIR.COM v1.4 -- list a directory through FujiNet's N: network device.
+; FUJIDIR.COM v1.5 -- list a directory through FujiNet's N: network device.
 ;
 ;       FUJIDIR N:<url>         e.g.  FUJIDIR N1:TNFS://192.168.1.5/
 ;
@@ -58,8 +58,12 @@
 ; v1.4: the size column had no unit label at all -- a plain number could
 ; be mistaken for bytes, K, or anything else, and the server's own LONG
 ; format actually mixes plain byte counts (small files) with K/M-suffixed
-; ones (larger files) with nothing distinguishing the two. Prints one
+; ones (larger files) with nothing distinguishing the two. Printed one
 ; line explaining this once, right before the listing starts.
+;-----------------------------------------------------------------------
+; v1.5: that explanation printed before EVERY listing, which got old
+; fast once you knew it. Moved into the usage message (bare FUJIDIR, no
+; args) instead -- said once, not on every run.
 ;-----------------------------------------------------------------------
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ;-----------------------------------------------------------------------
@@ -145,8 +149,6 @@ START:  LXI     SP,STACK
         LDA     RXBUF+1
         CPI     ACKCMD
         JNZ     EFAIL
-
-        CALL    SAYSIZH         ; explain the size column before listing
 
         XRA     A
         STA     ANYOUT          ; nothing printed yet
@@ -739,10 +741,6 @@ SAYNONE:LXI     D,MNONE
         MVI     C,PRSTR
         JMP     BDOS
 
-SAYSIZH:LXI     D,MSIZEH
-        MVI     C,PRSTR
-        JMP     BDOS
-
 USAGE:  LXI     D,MUSAGE
         MVI     C,PRSTR
         CALL    BDOS
@@ -761,14 +759,14 @@ MBADP:  DB      CR,LF,'FUJIDIR: failed -- parent path does not'
         DB      ' exist.',CR,LF,'$'
 MABRT:  DB      CR,LF,'FUJIDIR: aborted.',CR,LF,'$'
 MNONE:  DB      'FUJIDIR: nothing matches.',CR,LF,'$'
-MSIZEH: DB      CR,LF,'FUJIDIR: sizes shown as bytes, or K/M for'
-        DB      ' larger files (from the server).',CR,LF,'$'
 
-MUSAGE: DB      CR,LF,'FUJIDIR v1.4 -- list a directory through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIDIR v1.5 -- list a directory through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIDIR N:<url>',CR,LF,CR,LF
         DB      'Example',CR,LF
-        DB      '   FUJIDIR N1:TNFS://192.168.1.5/',CR,LF,'$'
+        DB      '   FUJIDIR N1:TNFS://192.168.1.5/',CR,LF,CR,LF
+        DB      'Sizes are shown as bytes, or K/M for larger'
+        DB      ' files (from the server).',CR,LF,'$'
 
 ;---- Variables ---------------------------------------------------------
 SPEC:     DS    SPECLEN

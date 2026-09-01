@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; FUJIGET.COM v1.3 -- fetch a file through FujiNet's N: network device.
+; FUJIGET.COM v1.4 -- fetch a file through FujiNet's N: network device.
 ;
 ;       FUJIGET N:<url> file.ext        e.g.  FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 ;
@@ -51,6 +51,13 @@
 ; busy-wait (TOOUTR below) and reports it directly rather than hanging.
 ; This budget is approximate and CPU-clock-speed-dependent, not a
 ; calibrated number of seconds -- see TOOUTR's own comment.
+;
+; v1.4: a large transfer used to print nothing at all until the final
+; "NNN records received," leaving no sign of life for however long that
+; took. Rather than a dot per 128-byte packet (would scroll the screen
+; on anything but a small file), RLOOP now prints "Received NNNN KB..."
+; in place (a bare CR, no LF, so each update overwrites the last) once
+; every 8 records = 1024 bytes -- see PROGCK/SAYPROG below.
 ;
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ; Nothing may be left live in a register across CALL BDOS.
@@ -172,6 +179,7 @@ START:  LXI     SP,STACK
         STA     RECPOS          ; nothing buffered yet
         LXI     H,0
         SHLD    RECS
+        SHLD    KCNT            ; nothing reported to the user yet either
 
 ;-----------------------------------------------------------------------
 ; RLOOP -- poll for a Ctrl-C abort, then ask STATUS. If FujiNet has bytes
@@ -253,6 +261,7 @@ RCPY:   LDAX    D
         CPI     RECLEN
         JNZ     RLOOP           ; still partial -- go poll again
         CALL    RFLUSH
+        CALL    PROGCK          ; every 8th record (1KB): update the user
         JMP     RLOOP
 
 ;-----------------------------------------------------------------------
@@ -307,6 +316,39 @@ RFLUSH: LXI     D,FCB
         INX     H
         SHLD    RECS
         RET
+
+;-----------------------------------------------------------------------
+; PROGCK -- called after every completed record. RECS just advanced, so
+; its low 3 bits are 0 exactly every 8th record (128*8 = 1024 bytes);
+; anything else, return immediately without touching KCNT or the screen.
+; On a hit, bump KCNT (the running KB count) and print it in place.
+;-----------------------------------------------------------------------
+PROGCK: LHLD    RECS
+        MOV     A,L
+        ANI     07H
+        RNZ
+        LHLD    KCNT
+        INX     H
+        SHLD    KCNT
+        JMP     SAYPROG
+
+;-----------------------------------------------------------------------
+; SAYPROG -- "\rReceived NNNN KB..." with no trailing CR/LF, so the next
+; call overwrites this line instead of scrolling. KCNT only grows during
+; one run, so a shorter new number can never leave a stale digit behind
+; from a longer old one.
+;-----------------------------------------------------------------------
+SAYPROG:MVI     E,CR
+        MVI     C,CONOUT
+        CALL    BDOS
+        LXI     D,MPROGP
+        MVI     C,PRSTR
+        CALL    BDOS
+        LHLD    KCNT
+        CALL    PRDEC
+        LXI     D,MPROGS
+        MVI     C,PRSTR
+        JMP     BDOS
 
 ABORT:  CALL    MKCLOSE
         CALL    SENDPK
@@ -982,8 +1024,10 @@ MRECS:  DB      ' records received.',CR,LF,'$'
 MEXIST: DB      CR,LF,'FUJIGET: $'
 MEXIST2:DB      ' exists. Replace? (Y/N) $'
 MSKIP:  DB      CR,LF,'FUJIGET: not replaced.',CR,LF,'$'
+MPROGP: DB      'Received $'
+MPROGS: DB      ' KB...$'
 
-MUSAGE: DB      CR,LF,'FUJIGET v1.3 -- fetch a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIGET v1.4 -- fetch a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
         DB      '   FUJIGET N:<url> file.ext',CR,LF,CR,LF
         DB      'Example',CR,LF
@@ -1009,6 +1053,7 @@ FCB:    DS      36              ; ours, not the CCP's at 5CH
 BUF:    DS      RECLEN
 RECPOS: DS      1
 RECS:   DS      2
+KCNT:   DS      2
 REQLEN: DS      2
 
 TXBUF:  DS      200

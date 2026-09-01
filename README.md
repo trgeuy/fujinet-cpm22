@@ -21,8 +21,8 @@ FUJIMKD N:<url>                 create a directory,e.g. FUJIMKD N1:TNFS://192.16
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
-prints its own version when run with no arguments. Current versions: `FUJIGET` v1.3, `FUJIPUT`
-v1.3, `FUJIDIR` v1.4, `FUJIMKD` v1.2.
+prints its own version when run with no arguments. Current versions: `FUJIGET` v1.4, `FUJIPUT`
+v1.4, `FUJIDIR` v1.5, `FUJIMKD` v1.2.
 
 There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
 FujiNet's protocol supports both the same way it supports `MKDIR` — see "Known limitations"
@@ -257,6 +257,10 @@ deletes an existing local file of the same name.
 If `file.ext` already exists locally, FUJIGET asks `HELLO.TXT exists. Replace? (Y/N)` before
 touching the network side at all — decline and nothing happens, on either side.
 
+As of v1.4, FUJIGET prints `Received NNNN KB...` in place (overwriting itself, not scrolling)
+once every 1KB received, so a transfer that takes a while has a visible sign of life without
+filling the screen the way a dot per packet would.
+
 If the network open fails, FUJIGET now tells you *which kind* of failure it probably was
 (FujiNet's reply itself carries no error detail, so this is a best-effort diagnosis, not
 something the server actually reported — see "Where the protocol details live" below):
@@ -291,6 +295,9 @@ that padding on the way out:
   binary file that happens to contain a real `1AH` byte partway through — which is why it
   isn't the default.
 
+As of v1.4, FUJIPUT prints `Sent NNNN KB...` in place the same way FUJIGET does (see above),
+once every 1KB sent.
+
 If the write-mode open fails (after the overwrite check above has already been answered, or
 found nothing to ask about), FUJIPUT diagnoses it the same best-effort way FUJIMKD does:
 `denied (permission or server restriction)` if the parent path checks out — creating/writing
@@ -307,9 +314,10 @@ Opens `<url>` in FujiNet's directory-listing mode and prints what comes back: on
 line. Files get a right-justified size column (plain bytes under 1K, `NNNNK` up to 1MB, `N.NM`
 above that); subdirectories are marked with a trailing `/` and no size (FujiNet always reports
 one for directories too, but it's a meaningless placeholder, so FUJIDIR drops it). Since a bare
-number and a `K`/`M`-suffixed one look inconsistent side by side with no label, v1.4 prints a
-one-line reminder of what the column means right before the listing starts. Works for
-any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) — e.g.
+number and a `K`/`M`-suffixed one look inconsistent side by side with no label, running bare
+`FUJIDIR` with no arguments explains what the column means as part of its usage message (v1.5 —
+earlier versions repeated that explanation before every listing, which got old fast once you
+knew it). Works for any URL scheme FujiNet's `N:` device treats as a filesystem (TNFS, SMB, etc.) — e.g.
 `FUJIDIR N1:TNFS://192.168.1.5/` lists the TNFS server's root,
 `FUJIDIR N1:TNFS://192.168.1.5/SUBDIR/` lists inside a subdirectory. A trailing slash on the
 target is optional as of v1.2 — FUJIDIR adds one internally before opening if you leave it off
