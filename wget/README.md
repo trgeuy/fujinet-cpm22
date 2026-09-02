@@ -9,16 +9,20 @@ Pass **only the local target filename** on the command line. `WGET` then prints 
 `URL: ` prompt and reads the URL there — do not put the URL on the command line, that's
 the whole point (see "Why prompt instead of a command-line argument" below).
 
-Example:
+Example — a real, case-sensitive HTTPS path, the case this tool exists for:
 
 ```
-A0>WGET HELLO.TXT
-URL: N1:TNFS://192.168.1.5/HELLO.TXT
-WGET: opening N1:TNFS://192.168.1.5/HELLO.TXT
+A0>WGET MEMTEST.ASM
+URL: N1:HTTPS://deramp.com/downloads/altair/software/utilities/other/MEMTEST.ASM
+WGET: opening N1:HTTPS://deramp.com/downloads/altair/software/utilities/other/MEMTEST.ASM
 Open OK. Receiving...
 
-1 records received.
+30 records received.
 ```
+
+Typed at `FUJIGET`'s command line instead, the CCP would uppercase that whole path before
+`FUJIGET` ever saw it, 404'ing against deramp.com's case-sensitive server — see below for why
+that's not just a cosmetic difference.
 
 Same `Nx:` channel prefix and full scheme as [`FUJIGET`](../README.md) — `TNFS://`,
 `HTTP://`, `HTTPS://`, `TCP://`, and whatever else FujiNet's `N:` device understands.
