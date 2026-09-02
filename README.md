@@ -270,6 +270,10 @@ something the server actually reported — see "Where the protocol details live"
 far the most common cause) or `failed -- parent path does not exist` (not even the containing
 directory is there).
 
+For a CP/M version of the Linux `wget` command — one that prompts for the URL instead of
+taking it on the command line, so its case survives a case-sensitive remote like a real HTTP
+server — see [`wget/`](https://github.com/trgeuy/fujinet-cpm22/tree/main/wget).
+
 ### FUJIPUT — push a file up
 
 ```
