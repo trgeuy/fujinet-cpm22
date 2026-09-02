@@ -3,7 +3,7 @@
 ; prompting for the URL instead of taking it on the command line.
 ;
 ;       WGET file.ext
-;       URL: <typed at the prompt>          e.g.  TNFS://192.168.1.5/HELLO.TXT
+;       URL: <typed at the prompt>          e.g.  HTTPS://example.com/HELLO.TXT
 ;
 ; Same engine as FUJIGET (open for read on FujiNet's N: device, stream
 ; the bytes into a new CP/M file, close both sides) -- the only real
@@ -1044,7 +1044,7 @@ MUSAGE: DB      CR,LF,'WGET v1.0 -- fetch a file through FujiNet''s'
         DB      '   URL: <typed at the prompt, case preserved>',CR,LF,CR,LF
         DB      'Example',CR,LF
         DB      '   WGET HELLO.TXT',CR,LF
-        DB      '   URL: TNFS://192.168.1.5/HELLO.TXT',CR,LF,'$'
+        DB      '   URL: HTTPS://example.com/HELLO.TXT',CR,LF,'$'
 
 ; ILLCHR -- verbatim from R.ASM. The ';' MUST be its own numeric byte, not
 ; inside the string: ASM.COM strips the comment before it parses quotes,
