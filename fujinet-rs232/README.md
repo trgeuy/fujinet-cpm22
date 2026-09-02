@@ -123,11 +123,12 @@ Worth knowing before you assume something's broken:
   inside what CP/M's own console-read loop can keep up with, which in practice means well
   under the link's nominal baud rate. If you're driving the link with a script rather than a
   human typing, don't blast data at full baud; add per-character pacing.
-- **Real hardware is measurably slower than the emulator, even locally.** In this project's own
-  measurements, a real adapter took roughly 2.5–3x longer per FujiBus request/response cycle
-  than the desktop FujiNet-PC build used for emulator testing — likely the real ESP32
-  firmware's own processing time, not a network or CPU-speed effect. Don't expect
-  emulator-level throughput.
+- **Real hardware is measurably slower than the emulator, even locally.** This project isolated
+  the cause: it's the real adapter's own ESP32 firmware, which is measurably slower per FujiBus
+  request/response cycle than the desktop FujiNet-PC software — not CPU clock speed (confirmed
+  within 1.35% of the emulator's) and not the 2SIO board. See
+  [`throughput-investigation.md`](throughput-investigation.md) for the full isolation experiment
+  and numbers. Don't expect emulator-level throughput.
 - **Check the physical network path if a request that should work reports "server not
   responding."** A correct command against a reachable host can still fail for mundane
   reasons on the wired/WiFi side between the adapter and its target (switch port, cabling) —
