@@ -52,6 +52,12 @@ serial-baud setup entirely via the adapter's own `fnconfig.ini`/web UI, since th
 `CONFIG.SYS`/`CONFIG.EXE` equivalent under CP/M. Repo-only, same reasoning as the other two —
 see <https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232>.
 
+And `wget/`: a fourth tool, `WGET`, that prompts for its URL at runtime instead of taking it on
+the command line — CP/M's CCP uppercases the whole command tail before any program sees it,
+which silently breaks a `FUJIGET`/`FUJIPUT`/`FUJIDIR` URL against a case-sensitive remote like a
+real HTTP/HTTPS server. Repo-only, same reasoning as the other three — see
+<https://github.com/trgeuy/fujinet-cpm22/tree/main/wget>.
+
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
