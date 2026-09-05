@@ -135,3 +135,169 @@ testing, included for reference.
   `fujinet-pc`'s log showed zero bytes received even after a `FUJIGET` open attempt. A
   crossover/null-modem connection was needed, the same class of gotcha as the already-documented
   need for a crossover cable between the physical FujiNet adapter and its network switch.
+
+## Addendum: a full baud sweep on real hardware, and feedback from deltecent (2026-09-03)
+
+The 2x2 experiment above (all four Real/Virtual 2SIO × Real/Virtual adapter combinations) only
+ran at 9600 baud. This addendum is a separate, narrower sweep: with the physical FujiNet adapter
+now able to run at 19200/38400/76800 as well, the same local-Pi `FUJIGET` test (`N-HANDLER.ATR`,
+92,288 bytes / 721 records, `STAT`-verified byte-exact on every run) was repeated across all four
+rates, but only at the two "pure" corners of that grid — **Real 8800c** (real 2SIO + real
+adapter) and **Emulator** (virtual 2SIO + virtual adapter) — not the two mixed combinations,
+matched against the same target (the project's Pi 2B TNFS box, now running `de-tnfsd` rather than
+the original `tnfsd`).
+
+| Baud | Real 8800c | Emulator | Real as % of emulator |
+|---|---|---|---|
+| 9600 | 485.9 B/s | 585.6 B/s | 83.0% |
+| 19200 | 764.8 B/s | 954.2 B/s | 80.2% |
+| 38400 | 1082.5 B/s | 1434.4 B/s | 75.5% |
+| 76800 | 1313.9 B/s | 1821.0 B/s | 72.2% |
+
+Both machines show the same decaying-efficiency-with-baud shape already established above.
+Real hardware's share of the emulator's throughput narrows steadily as baud rises (83% → 72%) —
+a smaller gap at every point than the 9600-baud 2x2 experiment's real+real/virtual+virtual ratio
+(505.0/594.3 = 85.0%) or the original 38400-baud comparison against the old `tnfsd` (~60%), though
+the server-software change means that older figure isn't a clean apples-to-apples baseline.
+
+Reworking this sweep's per-chunk dead time (same method as the table above — subtract the
+166-wire-bytes/chunk transmission time from the measured total, divide by 721 chunks) shows both
+machines hold roughly flat across all four bauds, not baud-dependent:
+
+| Baud | Real dead time/chunk | Emulator dead time/chunk |
+|---|---|---|
+| 9600 | 90.5ms | 45.7ms |
+| 19200 | 80.9ms | 47.7ms |
+| 38400 | 75.0ms | 46.0ms |
+| 76800 | 75.8ms | 48.7ms |
+
+This extends the "fixed, baud-invariant per-chunk overhead" finding above — previously only shown
+on the emulator — to real hardware as well: real hardware's premium over the emulator (roughly
++30-40ms/chunk) doesn't grow or shrink with baud, consistent with it being a fixed per-round-trip
+cost rather than something that scales with the wire rate.
+
+### Feedback from deltecent
+
+deltecent (the FujiNet developer behind [`de-tnfsd`](https://github.com/deltecent/de-tnfsd), see
+this project's TNFS server setup docs) reviewed this document and confirmed the headline finding:
+at controlled baud, the real adapter's per-chunk dead time (80.5ms) versus the virtual adapter's
+(42.5ms) on the same real 2SIO shows the ESP32 firmware's own FujiBus processing is the dominant
+term, not the wire or the 2SIO board.
+
+Two refinements worth carrying forward:
+
+- **The cleanest single "adapter tax" figure is the real-2SIO column's ~17ms delta (80.5 − 63.7
+  ms), not the virtual-2SIO column's ~95ms delta (138.0 − 42.5 ms)** — the larger number is
+  inflated by the emulator's own per-byte host-syscall overhead when reading a real serial port
+  (already flagged as a confound above), so it shouldn't be read as "the real cost of the real
+  adapter."
+- **"The ESP32 firmware is slower" is a black box that likely contains two distinct mechanisms**:
+  actual CPU-bound time in the FujiBus command handler, versus ESP-side TNFS-over-WiFi latency
+  compounded by the bus task competing with the WiFi task on the ESP32's shared core — the second
+  of which deltecent notes was addressed in the ADAM build by pinning the bus to its own core.
+  **Update, same day: confirmed against the actual `fujinet-firmware` source** — see the next
+  section. This document's own measurements don't separate the two; deltecent's suggested next
+  step is to isolate WiFi/TNFS latency and bus/WiFi core contention specifically — e.g.
+  re-running against a local SD-card image instead of TNFS, or with the bus task pinned to its
+  own core — to see whether the "firmware processing" tax is really compute-bound or really
+  network/scheduling latency wearing a firmware mask. Not yet attempted; the baud-invariance
+  finding above is consistent with either explanation (both would show up as a roughly fixed
+  per-round-trip cost) and doesn't distinguish between them.
+
+## Addendum: the ADAM core-pinning claim, confirmed in `fujinet-firmware` source (2026-09-03)
+
+Cloned `FujiNetWIFI/fujinet-firmware` (shallow, `main`) to check deltecent's claim directly rather
+than take it on faith. It's accurate, not just plausible:
+
+- **`lib/bus/adamnet/adamnet.cpp:502-512`** — the ADAM build hands its bus off to a dedicated task:
+  `xTaskCreatePinnedToCore(adamnet_bus_task, ..., ADAMNET_BUS_TASK_CORE)`, with
+  `ADAMNET_BUS_TASK_CORE 1` and `ADAMNET_BUS_TASK_PRIORITY 19` (`lib/bus/adamnet/adamnet.h:57-59`).
+- **`lib/bus/rs232/rs232.cpp`** has no `xTaskCreate` anywhere — RS232's bus is serviced inline from
+  the shared main loop, same as every non-ADAM build.
+- **`src/main.cpp:547-581`** documents exactly why, in the firmware's own comments: ADAM's task
+  exists specifically "so it services the one-wire bus continuously and can't be stalled by
+  WiFi/scheduler latency mid-handshake (the desync that caused intermittent 'Drive Error' under
+  PIP `*.*[V]`)". Every other build, RS232 included, runs `SYSTEM_BUS.service()` in the main loop
+  and then explicitly `taskYIELD()`s on `ESP_PLATFORM` to let other tasks — WiFi included — run
+  before the next bus service call.
+
+So the WiFi/scheduler-contention mechanism deltecent proposed as a candidate isn't hypothetical —
+it's a real effect the firmware team already found and fixed once, for a different bus, with a
+real symptom (`Drive Error` under load) attached. It was just never applied to RS232. This doesn't
+prove it's *the* explanation for RS232's dead-time premium (that still needs the isolating test
+deltecent proposed — local SD vs. TNFS, or a pinned-core RS232 build, to actually measure it), but
+it substantially raises the odds: this is a known, previously-fixed-elsewhere failure mode in the
+exact same firmware codebase, not a novel hypothesis.
+
+**PR/issue status for deltecent's `fujinet-firmware` contributions, checked 2026-09-03** (context
+for a Sunday conversation, not something to act on unilaterally — see the note on upstream
+contributions below): [#1578](https://github.com/FujiNetWIFI/fujinet-firmware/pull/1578) merged
+(76800 baud option for RS232 — this is literally why our adapter can run at that rate now),
+[#1581](https://github.com/FujiNetWIFI/fujinet-firmware/pull/1581) open (WiFi multi-AP by RSSI),
+[#1582](https://github.com/FujiNetWIFI/fujinet-firmware/pull/1582) closed/not merged (new
+`MediaTypeDSK` for raw 8"/5.25" floppy images on RS232 — CI passed cleanly), and open issue
+[#1575](https://github.com/FujiNetWIFI/fujinet-firmware/issues/1575) (WiFi RSSI/multi-AP, same
+topic as #1581). **Nothing has been filed yet for the RS232 core-pinning fix** — it's still just
+this conversation, not a PR or issue.
+
+## Addendum: firmware flashing now works on this Mac, and a live test build was flashed and
+## measured (2026-09-03)
+
+**The uploader script itself was never Intel-only** — `fujinet_firmware_uploader.py` is pure
+Python. The actual break: it hardcoded a path into PlatformIO's package cache
+(`~/.platformio/packages/tool-esptoolpy/esptool.py`), which historically wasn't published for
+macOS arm64, and shelled out to `pio device monitor` for the post-flash console. Fixed locally
+(in this Mac's own clone of `fujinet-firmware`, not pushed anywhere — see below) by using the
+already pip-installed, architecture-independent `esptool` directly (`python3 -m esptool`,
+confirmed native arm64, v5.3.1) and swapping the monitor step to pyserial's own `miniterm`
+(ships as an `esptool` dependency already, no extra install). Also combined the two separate
+`write_flash` calls into one `write-flash` invocation with both offset/file pairs, so flashing
+only needs one connect/reset handshake with the chip instead of two.
+
+**Useful side-finding**: every PR's CI run already builds and publishes exactly the artifact
+structure the uploader expects (`firmware.bin`, `littlefs.bin`, `release.json` with offsets) —
+`gh api repos/FujiNetWIFI/fujinet-firmware/actions/runs/<id>/artifacts` finds it, no separate
+build step needed. So whenever a core-pinning PR exists, its test build will already be sitting
+under that PR's checks.
+
+**Live-tested end to end** on the physical adapter (chip: ESP32-S3, 16MB flash, 8MB PSRAM —
+confirmed to match the CI build's target board, `esp32-s3-wroom-1-n16r8`):
+
+1. **Full 16MB flash backed up first**, before writing anything —
+   `esptool read-flash 0x0 0x1000000` — saved to
+   `Documentation/Odds/fujinet-rs232-firmware-backup/fujinet-rs232-fullflash-backup-20260903-v1.6.1.bin`
+   (SHA-256 `7b7b4c3a2a9b81841822caef21c9fe0102d8d1356ddb6c5d627d9ad83d506b53`). Restore recipe:
+   `esptool --port <port> write-flash 0x0 <that file>`.
+2. Flashed PR #1582's CI build (v1.6.2-dev, `firmware.bin` @ `0x10000` +
+   `littlefs.bin` @ `0xA70000`) over the adapter's existing v1.6.1. Both writes verified by hash
+   in the same `esptool` run.
+3. Booted clean — confirmed via the console log (`AppKeyManager`/`fnConfig` lines) and the WebUI,
+   which showed v1.6.2 and the correct 76800 baud setting. **Existing config survived the
+   littlefs.bin overwrite** — `fnconfig.ini` lives on the SD card as the source of truth and gets
+   synced to/from the internal FLASH copy at boot, so the fresh CI-built littlefs image didn't
+   wipe the adapter's real WiFi/serial settings.
+4. Re-ran the local-Pi `FUJIGET N-HANDLER.ATR` throughput test at 76800 baud on real hardware for
+   a same-file, same-baud before/after:
+
+   | Firmware | Time | Throughput | Efficiency |
+   |---|---|---|---|
+   | v1.6.1 (this doc's earlier 76800-baud row) | 70.24s | 1313.9 B/s | 17.1% |
+   | v1.6.2-dev (PR #1582 build) | 72.54s | 1272.4 B/s | 16.6% |
+
+   No meaningful change (~3%, inside normal jitter) — expected, since #1582 is about floppy media
+   types, not the bus/RS232 service path. This is a clean baseline confirming the flash-swap
+   process itself introduces no regression, useful as a control once there's an actual
+   core-pinning build to test against.
+
+## A note on upstream contributions
+
+**Decision (2026-09-03): we don't submit PRs to the FujiNet firmware team ourselves.** Findings
+get relayed to deltecent directly once we're confident in them (he's aware of this project's
+throughput work already, and the two of us plan to talk directly). This follows from the same
+session's `de-tnfsd` work, where three separate small PRs went upstream in one morning instead of
+being bundled into one — more PR-review overhead for the maintainer than necessary, for changes
+that were easier to review together than apart. The lesson generalizes: consolidate before
+submitting anything upstream, and prefer routing findings through a direct conversation with the
+person who owns the codebase over unilaterally opening PRs against it — especially somewhere with
+an existing, active pace of change (many other PRs/issues already in flight, per the status
+above) where an unbundled/unreviewed drop-in is more friction than help.
