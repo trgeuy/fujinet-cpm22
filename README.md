@@ -58,6 +58,12 @@ which silently breaks a `FUJIGET`/`FUJIPUT`/`FUJIDIR` URL against a case-sensiti
 real HTTP/HTTPS server. Repo-only, same reasoning as the other three — see
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/wget>.
 
+Unrelated to CP/M itself but useful to anyone bringing up a real FujiNet adapter from an
+Apple Silicon Mac: `firmware-uploader-apple-silicon/` is a patched drop-in replacement for
+upstream `fujinet-firmware`'s firmware-flashing script, fixing an Apple Silicon compatibility
+gap in the stock version. An interim fix, not a fork or a pending PR — see
+<https://github.com/trgeuy/fujinet-cpm22/tree/main/firmware-uploader-apple-silicon> for why.
+
 ## What's tested so far
 
 Everything here has been built and verified against the **emulated** `fujinet-pc-RS232`
