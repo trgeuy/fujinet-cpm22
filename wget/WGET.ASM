@@ -1,5 +1,5 @@
 ;-----------------------------------------------------------------------
-; WGET.COM v1.0 -- fetch a file through FujiNet's N: network device,
+; WGET.COM v1.2 -- fetch a file through FujiNet's N: network device,
 ; prompting for the URL instead of taking it on the command line.
 ;
 ;       WGET file.ext
@@ -38,6 +38,18 @@
 ;       ASM WGET                -> WGET.HEX
 ;       LOAD WGET                -> WGET.COM
 ;
+; v1.2: every READ used to be capped at whatever room was left in the
+; current 128-byte CP/M record, even though FujiNet's NETCMD_READ can
+; return far more -- and traced to source (NetworkProtocolTNFS::
+; read_file_handle(), fujinet-firmware lib/network-protocol/TNFS.cpp),
+; each READ triggers its own live TNFS-over-network fetch for exactly
+; the length requested, no readahead. Capping every request at 128
+; meant a real network round trip to the TNFS server for every 128
+; bytes, when TNFS itself supports up to 525 (TNFS_MAX_READWRITE_
+; PAYLOAD). REQLEN is now min(KNOWNBW, MAXREAD=512) -- see MAXREAD's own
+; comment for why 512 -- and RGOT's copy loop splits that payload across
+; as many 128-byte records as it takes, flushing each as it fills.
+;
 ;-----------------------------------------------------------------------
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ; Nothing may be left live in a register across CALL BDOS.
@@ -68,6 +80,15 @@ CTRLC   EQU     03H
 CPMEOF  EQU     1AH             ; ^Z -- pads the last, partial record
 
 RECLEN  EQU     128             ; a CP/M record
+MAXREAD EQU     512             ; largest single NETCMD_READ request -- 4
+                                ; CP/M records exactly (no leftover bytes
+                                ; between reads), and safely under TNFS's
+                                ; own 525-byte max payload (see rs232-
+                                ; protocol.md / TNFS_MAX_READWRITE_PAYLOAD)
+                                ; so one READ costs exactly one TNFS fetch,
+                                ; never two. RGOT's "CPI 2" hand-derives
+                                ; MAXREAD's high byte -- update it too if
+                                ; this ever changes.
 
 ;---- The 2SIO card, unit b -----------------------------------------------
 SIOST   EQU     12H
@@ -158,28 +179,46 @@ START:  LXI     SP,STACK
         LXI     H,0
         SHLD    RECS
         SHLD    KCNT            ; nothing reported to the user yet either
+        SHLD    KNOWNBW         ; nothing known-waiting yet either -- ask STATUS first
 
 ;-----------------------------------------------------------------------
-; RLOOP -- poll for a Ctrl-C abort, then ask STATUS. If FujiNet has bytes
-; waiting, READ up to however much room is left in the current 128-byte
-; record and copy it in; when a record fills, write it. Connected=0 with
+; RLOOP -- poll for a Ctrl-C abort. If a prior STATUS already told us
+; more bytes were waiting than the last READ consumed (KNOWNBW > 0),
+; skip straight to reading them instead of re-asking STATUS -- that
+; count can't go stale, since nothing else drains this connection.
+; Otherwise ask STATUS. If FujiNet has bytes waiting, READ up to MAXREAD
+; bytes (see MAXREAD's own comment) and copy them into as many 128-byte
+; records as it takes, writing each as it fills. Connected=0 with
 ; nothing waiting is a clean end of file, not an error.
+;
+; v1.1: RPOLL used to run unconditionally on every pass, even when the
+; previous STATUS reply already reported more than one READ's worth
+; waiting -- costing a full extra RS232 round trip per leftover chunk
+; for no reason. KNOWNBW now carries that leftover count forward across
+; iterations so STATUS is only re-asked once it's actually exhausted.
 ;-----------------------------------------------------------------------
 RLOOP:  MVI     E,0FFH
         MVI     C,DIRIO
         CALL    BDOS
         ORA     A
-        JZ      RPOLL
+        JZ      RCHECK
         CPI     CTRLC
         JZ      ABORT
+
+RCHECK: LHLD    KNOWNBW
+        MOV     A,H
+        ORA     L
+        JNZ     RGOT            ; still known-waiting from a prior STATUS
 
 RPOLL:  CALL    MKSTAT
         CALL    SENDPK
         CALL    RECVPK
 
         LDA     RXBUF+6         ; bytes_waiting, lo
+        STA     KNOWNBW
         MOV     D,A
         LDA     RXBUF+7         ; bytes_waiting, hi
+        STA     KNOWNBW+1
         ORA     D
         JNZ     RGOT            ; something waiting -- go read it
 
@@ -188,58 +227,105 @@ RPOLL:  CALL    MKSTAT
         JNZ     RLOOP           ; still connected, nothing waiting yet
         JMP     RDONE           ; connected=0, nothing waiting: real EOF
 
-;---- REQLEN = min(bytes_waiting, room left in the current record) -----
-RGOT:   LDA     RECPOS
-        MOV     C,A
-        MVI     A,RECLEN
-        SUB     C
-        MOV     C,A             ; C = room left (1..128 -- RECPOS<128 always here)
+;---- REQLEN = min(KNOWNBW, MAXREAD) -- no longer tied to the CP/M -----
+;---- record boundary, so one READ can now span several records.   ----
+RGOT:   LDA     KNOWNBW+1       ; bw hi
+        CPI     2               ; hi>=2 means bw >= 512 (MAXREAD) -- keep
+        JNC     RQMAX           ; this "2" in step with MAXREAD if it changes
 
-        LDA     RXBUF+7         ; bw hi
-        ORA     A
-        JNZ     RQROOM          ; bw >= 256, certainly > room
-
-        LDA     RXBUF+6         ; bw lo (bw is 0..255 since hi=0)
-        CMP     C
-        JC      RQBW            ; bw < room -- A already holds bw
-        JMP     RQROOM          ; bw >= room -- use room
-
-RQBW:   STA     REQLEN
+        LHLD    KNOWNBW
+        SHLD    REQLEN          ; bw < MAXREAD -- ask for all of it
         JMP     RQGO
-RQROOM: MOV     A,C
-        STA     REQLEN
-RQGO:   XRA     A
-        STA     REQLEN+1        ; hi byte always 0 -- REQLEN never exceeds 128
 
-        CALL    MKREAD
+RQMAX:  LXI     H,MAXREAD
+        SHLD    REQLEN
+RQGO:   CALL    MKREAD
         CALL    SENDPK
         CALL    RECVPK
 
-;---- copy REQLEN bytes from RXBUF+6 into BUF+RECPOS --------------------
+;---- copy REQLEN bytes from RXBUF+6 into CP/M records, a record at a --
+;---- time -- since REQLEN can now exceed 128, this may flush more     -
+;---- than one record per READ (see MAXREAD/RGOT, above).              -
+        LXI     H,RXBUF+6
+        SHLD    CPSRC
+        LHLD    REQLEN
+        SHLD    CPCNT
+
+RCPY:   LDA     RECPOS
+        MOV     C,A
+        MVI     A,RECLEN
+        SUB     C
+        MOV     C,A             ; C = room left in the current record (1..128)
+
+        LDA     CPCNT+1         ; remaining hi
+        ORA     A
+        JNZ     RCROOM          ; remaining >= 256, certainly > room
+
+        LDA     CPCNT           ; remaining lo (remaining is 0..255 since hi=0)
+        CMP     C
+        JC      RCCNT           ; remaining < room -- A already holds it
+RCROOM: MOV     A,C             ; room <= remaining -- copy a full room's worth
+RCCNT:  STA     CPYN            ; CPYN = this pass's copy count (1..128)
+
+;---- copy CPYN bytes from [CPSRC] into BUF+RECPOS ----------------------
         LXI     H,BUF
         LDA     RECPOS
         MOV     E,A
         MVI     D,0
-        DAD     D               ; HL = BUF+RECPOS
-        LXI     D,RXBUF+6
-        LDA     REQLEN
+        DAD     D               ; HL = BUF+RECPOS (dest)
+        PUSH    H
+        LHLD    CPSRC
+        XCHG                    ; DE = CPSRC (source)
+        POP     H               ; HL = dest, restored
+        LDA     CPYN
         MOV     B,A
-RCPY:   LDAX    D
+RCPYI:  LDAX    D
         MOV     M,A
         INX     H
         INX     D
         DCR     B
-        JNZ     RCPY
+        JNZ     RCPYI
+        XCHG                    ; HL = advanced source ptr (was DE)
+        SHLD    CPSRC
 
         LDA     RECPOS
         MOV     C,A
-        LDA     REQLEN
+        LDA     CPYN
         ADD     C
         STA     RECPOS
         CPI     RECLEN
-        JNZ     RLOOP           ; still partial -- go poll again
+        JNZ     RCCHK           ; record not full yet -- no flush this pass
         CALL    RFLUSH
         CALL    PROGCK          ; every 8th record (1KB): update the user
+
+RCCHK:  LHLD    CPCNT
+        LDA     CPYN
+        MOV     E,A
+        MVI     D,0
+        MOV     A,L
+        SUB     E
+        MOV     L,A
+        MOV     A,H
+        SBB     D
+        MOV     H,A
+        SHLD    CPCNT
+        MOV     A,H
+        ORA     L
+        JNZ     RCPY            ; more of this READ's payload left -- another pass
+
+;---- KNOWNBW -= REQLEN (REQLEN <= KNOWNBW always -- see RGOT's min()) --
+        LHLD    KNOWNBW
+        LDA     REQLEN
+        MOV     E,A
+        LDA     REQLEN+1
+        MOV     D,A
+        MOV     A,L
+        SUB     E
+        MOV     L,A
+        MOV     A,H
+        SBB     D
+        MOV     H,A
+        SHLD    KNOWNBW
         JMP     RLOOP
 
 ;-----------------------------------------------------------------------
@@ -1037,7 +1123,7 @@ MPROGP: DB      'Received $'
 MPROGS: DB      ' KB...$'
 MURL:   DB      'URL: $'
 
-MUSAGE: DB      CR,LF,'WGET v1.0 -- fetch a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'WGET v1.2 -- fetch a file through FujiNet''s'
         DB      ' N: network device, prompting for the URL so its'
         DB      ' case survives the CCP.',CR,LF,CR,LF
         DB      '   WGET file.ext',CR,LF
@@ -1068,6 +1154,12 @@ RECPOS: DS      1
 RECS:   DS      2
 KCNT:   DS      2
 REQLEN: DS      2
+KNOWNBW:DS      2               ; bytes still known waiting, carried across RLOOP
+CPSRC:  DS      2               ; walks RXBUF's payload while splitting a
+                                ; >128-byte READ across several CP/M records
+CPCNT:  DS      2               ; bytes of the current READ's payload not
+                                ; yet copied into a record
+CPYN:   DS      1               ; this pass's copy count (1..128)
 
 LBUF:   DB      SPECLEN-2       ; max chars BDOS 10 may store (its own header
                                 ; byte 0 -- MUST be preset by the caller,
@@ -1076,7 +1168,7 @@ LBUF:   DB      SPECLEN-2       ; max chars BDOS 10 may store (its own header
         DS      SPECLEN-2       ; room for the typed characters
 
 TXBUF:  DS      200
-RXBUF:  DS      200
+RXBUF:  DS      MAXREAD+20      ; header + up to MAXREAD bytes of payload
 NUMEND: DS      1
 
         DS      64              ; stack

@@ -20,7 +20,7 @@ FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.16
 ```
 
 Each tool is versioned independently (they change on their own schedule, not together) and
-prints its own version when run with no arguments. Current versions: `FUJIGET` v1.4, `FUJIPUT`
+prints its own version when run with no arguments. Current versions: `FUJIGET` v1.6, `FUJIPUT`
 v1.4, `FUJIDIR` v1.5.
 
 There's deliberately no delete/remove counterpart (`RMDIR`, file `DELETE`) even though
