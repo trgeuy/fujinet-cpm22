@@ -43,10 +43,12 @@ launcher script (see sections 1 and 2 below). It is only useful if you are actua
 `altairsim` itself. So it is not in the packaged release either. Get it from
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/altairsim> if you want it.
 
-`tnfsd-server-setup/` gets the same treatment. It is a step-by-step guide for standing up your
-own `tnfsd` with a classic anonymous-FTP layout: read-only content folders plus a genuinely
-write-only incoming folder, all on plain Unix permissions, with no `tnfsd` patch needed. It is
-only useful if you are running a server, not a client. So it is repo-only too. See
+`tnfsd-server-setup/` gets the same treatment. It points you at
+[de-tnfsd](https://github.com/trgeuy/de-tnfsd), our fork of a TNFS daemon built around a
+classic anonymous-FTP layout (read-only `pub/`, write-only `incoming/`), and covers what is
+specific to CP/M on top of that: the CCP-uppercases-everything gotcha and a verification
+checklist using this repo's own tools. It is only useful if you are running a server, not a
+client. So it is repo-only too. See
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/tnfsd-server-setup>.
 
 `fujinet-rs232/` covers bringing up a **physical** FujiNet RS-232 adapter for CP/M. WiFi and
@@ -465,11 +467,10 @@ That is it. FujiNet-PC talks to `tnfsd` the same way it would talk to any real T
 everything above works identically against `127.0.0.1` as it would against a real remote host.
 
 **Want to run a real server with mixed read-only/write-only folders** (an "upload here, browse
-there" layout, like an old-school anonymous FTP site)? See `tnfsd-server-setup/` in this repo.
-It covers building `tnfsd` from source on a Raspberry Pi/Linux box, the exact permission bits
-and `UMask` setting that make a folder genuinely write-only (not just unlisted), and a real
-CP/M-side gotcha (command-line case-folding) that will otherwise make lowercase server paths
-unreachable.
+there" layout, like an old-school anonymous FTP site)? See `tnfsd-server-setup/` in this repo,
+which points you at [de-tnfsd](https://github.com/trgeuy/de-tnfsd) for the server itself and
+covers a real CP/M-side gotcha (command-line case-folding) that will otherwise make lowercase
+server paths unreachable.
 
 ---
 

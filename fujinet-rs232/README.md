@@ -11,6 +11,9 @@ in CP/M.
 This document replaces the DOS manual's Section 2 ("Setup") for CP/M. The team tested it against
 a real FujiNet RS-232 adapter on a real Altair 8800c.
 
+Do not have the adapter yet? Buy one from
+[FV Research](https://www.fvresearch.com/product/fujinet-rs232/).
+
 ## Why the DOS instructions do not apply
 
 - **CP/M has no loadable-driver model.** DOS setup depends on `DEVICE=FUJINET.SYS` and
