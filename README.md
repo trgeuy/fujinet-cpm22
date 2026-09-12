@@ -16,9 +16,9 @@ PCGET/PCPUT's serial-line approach generalizes to any CP/M machine, real or emul
 why FUJIGET/FUJIPUT follow that lineage instead.)
 
 ```
-FUJIGET N:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
-FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
-FUJIDIR N:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/
+FUJIGET N1:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
+FUJIPUT file.ext N1:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
+FUJIDIR N1:<url>                 list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/
 ```
 
 Each tool has its own version number. Each tool changes on its own schedule, not together.
