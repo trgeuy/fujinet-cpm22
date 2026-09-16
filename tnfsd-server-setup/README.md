@@ -48,7 +48,7 @@ lowercase or mixed-case names, which would otherwise stay silently
 unreachable from CP/M forever. `de-tnfsd`'s `contrib/tnfs-case-fix/` fixes
 this automatically; see that repo for install steps.
 
-## A diagnostic-wording note (needs re-verification against a live CP/M client)
+## A diagnostic-wording note (verified live against de-tnfsd, 2026-09-16)
 
 Under de-tnfsd, `OPENDIR`, `STAT`, and `OPEN` against anything under
 `/incoming` all get refused with a uniform `EACCES`. This comes straight from
@@ -61,11 +61,17 @@ by an exact known name. de-tnfsd has no equivalent gap.
 The old guide documented `FUJIGET` failing against `INCOMING/` with `"failed
 -- parent path does not exist"`, rather than "denied". This was a quirk of
 `FUJIGET`'s own parent-directory reachability probe, under stock `tnfsd`'s
-specific failure shape. **The team has not re-confirmed this wording against
-de-tnfsd's `EACCES`-from-capability-table response.** The underlying refusal
-reason has changed, even though the practical effect, a blocked read, has
-not. Verify the actual wording your `FUJIGET` prints before you rely on it in
-your own documentation.
+specific failure shape. **Re-confirmed live against the current de-tnfsd
+(`c101a4f`) with a real CP/M client: the wording is unchanged.** Even though
+the underlying refusal mechanism is now `EACCES` from the capability table
+rather than stock `tnfsd`'s directory-permission check, `FUJIGET` still
+prints exactly `"failed -- parent path does not exist"` — its own
+parent-directory probe reinterprets the denial the same way either way. Also
+checked `FUJIDIR N1:TNFS://<host>/INCOMING/` directly: it prints `"not found
+on that remote server."`, not "denied" either. Neither tool's wording names
+the real reason; both are misleading if read literally, so don't debug from
+the message text — the practical effect (a blocked read or listing) is what
+matters, not the string.
 
 ## Quick verification checklist
 
