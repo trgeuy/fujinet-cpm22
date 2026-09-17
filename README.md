@@ -390,7 +390,7 @@ calls are wired to the one `CON:` device only, so there is no BDOS console call 
 That means **the source is the config file**. If your hardware does not match this project's
 assumptions, you edit the `.ASM`, reassemble (`ASM FUJIGET` / `LOAD FUJIGET`, etc.), and you
 are done. There is no separate settings file, because CP/M's `ASM.COM` has no `INCLUDE`
-directive. Each `.ASM` carries its own copy of the two things below. If you change one,
+directive. Each `.ASM` carries its own copy of the three things below. If you change one,
 **change it in all of them** (including `testing/NC.ASM`, if you use it) and rebuild each one.
 
 ### 1. The port addresses
@@ -412,7 +412,38 @@ hardware, **this is the only thing that needs to change** to point these tools a
 else in the file cares what the actual numbers are; they are used everywhere else only by
 name.
 
-### 2. The UART initialization
+### 2. The status-register bits
+
+Three small routines in each `.ASM` poll `SIOST` and test one bit at a time before moving a
+byte:
+
+```asm
+AO1:    IN      SIOST           ; wait for transmit-ready before OUT SIODT
+        ANI     02H
+        JZ      AO1
+
+ACIN:   IN      SIOST           ; wait for data-ready before IN SIODT
+        ANI     01H
+        JZ      ACIN
+```
+
+`FUJIGET`, `FUJIPUT`, and `FUJIDIR` also have `RPWAIT`, a timeout-aware variant of the same
+data-ready wait, tested the same way.
+
+`ANI 01H` tests bit 0: the 6850's RDRF flag (receive data register full, a byte is waiting).
+`ANI 02H` tests bit 1: the 6850's TDRE flag (transmit data register empty, ready for the next
+byte). These bit positions belong to the same chip as the control byte in section 3 below, not
+to this project's own choice.
+
+If your hardware uses a different UART (an 8251 USART, for example), its status register very
+likely puts these flags at different bit positions, or gives them different names. Check that
+chip's datasheet and change `01H`/`02H` at every `IN SIOST` site to match: `RPWAIT`, `AO1`, and
+`ACIN` in `FUJIGET.ASM`, `FUJIPUT.ASM`, and `FUJIDIR.ASM`, plus `AO1` and `ACIN` in
+`testing/NC.ASM` if you use it. Leaving these unchanged on non-6850 hardware does not fail
+cleanly: the program polls the wrong bit forever, or reads a bit that happens to be set for an
+unrelated reason and wrongly treats the port as ready.
+
+### 3. The UART initialization
 
 A few lines into each program's `START:`, before it does anything else with the port:
 
@@ -439,7 +470,7 @@ needs. The two bits at the bottom select the clock divide, the next three select
 and the top three control RTS and the two interrupt-enable bits. Any 6850 datasheet has the
 full table.
 
-### 3. The response-timeout budget
+### 4. The response-timeout budget
 
 Also worth knowing about while you are in there: `TOOUTR`, near the port equates, controls how
 long each program waits for a reply before reporting `destination server not responding` (see
