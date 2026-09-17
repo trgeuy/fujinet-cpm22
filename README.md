@@ -443,6 +443,14 @@ chip's datasheet and change `01H`/`02H` at every `IN SIOST` site to match: `RPWA
 cleanly: the program polls the wrong bit forever, or reads a bit that happens to be set for an
 unrelated reason and wrongly treats the port as ready.
 
+Relocating the bit is not always enough, either: check its **polarity**, not just its position.
+The 6850 is active-high, a set bit means ready, which is what `JZ AO1`/`JZ ACIN` above assume.
+Some UARTs are active-low instead: the MITS 88-SIO's COM2502, for one, signals ready with a
+**clear** bit. On a chip like that, changing `01H`/`02H` to the right bit is not enough. The
+branch has to flip too, `JZ` to `JNZ` and back, at every site listed above, or the program waits
+forever, or treats a not-ready port as ready, at the very bit position the datasheet says is
+correct.
+
 ### 3. The UART initialization
 
 A few lines into each program's `START:`, before it does anything else with the port:
