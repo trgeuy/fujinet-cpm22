@@ -139,33 +139,3 @@ Know these differences before you assume something is broken:
   responding."** A correct command against a reachable host can still fail for ordinary reasons
   on the wired or WiFi path between the adapter and its target, such as a switch port or a cable.
   Rule out these causes before you suspect the CP/M tools or the adapter's firmware.
-
----
-
-## What changed
-
-Full Simplified-Technical-English-style rewrite, not a light pass. Every fact, number, file
-name, command, code sample, and quoted string from the original is preserved exactly. Nothing was
-added or dropped.
-
-**Rule 2 (sentence limits).** The original is written in a dense style, with many 30-60 word
-sentences that carry two or three ideas joined by em dashes or semicolons. Almost every sentence
-in the rewrite is under 20-25 words; each long original sentence was split into several short
-ones, one idea per sentence.
-
-**Rule 10 (em dashes).** The original uses the em dash constantly, as a stand-in for commas,
-colons, periods, and parentheses. Every one was removed and replaced with whichever of those it
-was actually doing the job of in that sentence.
-
-**Rule 4 (active voice).** A few constructions with no clear subject ("have to happen entirely
-independent of...", "is inflated by...") were rewritten with an explicit agent doing the action.
-
-**Contractions.** Expanded throughout (*isn't* to *is not*, *doesn't* to *does not*, *you'll* to
-*you must*, and so on), except inside the two direct quotes from the DOS manual and the FujiNet
-web UI's own wording, which are left byte-for-byte exact per the skill's rule against simplifying
-quoted text.
-
-**Left alone.** Both direct quotes from the DOS manual, every code block, every command, every
-file name, and every link are reproduced exactly as in the original. Established short technical
-terms (`FujiBus request/response cycle`, `Host Slots`, `loadable-driver model`) were kept as-is:
-each is three nouns or fewer, so none trips the noun-cluster rule.

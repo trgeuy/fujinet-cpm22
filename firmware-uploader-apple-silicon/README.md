@@ -69,33 +69,3 @@ This fix is small and self-contained. It solves a real problem: the maintainer h
 has mentioned using a separate Intel Mac just to flash firmware. So this tool is
 published here as a standalone interim tool, instead of left unused in a private
 branch.
-
-## What changed
-
-**Rule 2 (sentence limits).** The two long compound sentences in the opening
-paragraphs (the "shells out to `esptool.py`..." sentence and the "confirmed findings
-get relayed..." sentence) were each split into three shorter sentences, one fact each.
-
-**Rule 4 (active voice).** "Both `firmware.bin` and `littlefs.bin` are flashed in a
-single `write-flash` call" → "The uploader flashes both `firmware.bin` and
-`littlefs.bin` in one `write-flash` call." "PlatformIO's bundled `esptool.py` package
-historically wasn't published for macOS `arm64`" → "PlatformIO did not publish its
-bundled `esptool.py` package for macOS `arm64`" (names PlatformIO as the actual agent).
-"confirmed findings get relayed to them" → "Contributors relay confirmed findings to
-the maintainers directly."
-
-**Rule 9/10 (word substitutions, slop, em dashes).** All contractions expanded
-(*doesn't* → *does not*, *isn't* → *is not*, *It's* → *It is*, *that's* → *So*,
-*wasn't* → *did not*, *he's* → *has*). Every em dash removed and replaced with a
-period or comma, splitting the sentence around it. *unilaterally* → *on their own*.
-*invocations* → *calls*. *proper* dropped as an empty qualifier before *`arm64`
-wheels*. *periodically* → *regularly*.
-
-**Rule 3 (one instruction per sentence).** "drop this folder and go back to the
-original script; check the link above periodically" became three separate imperative
-sentences.
-
-**Left alone.** All code, filenames, paths, commands, and links are reproduced exactly
-as in the original, including the code block and both upstream URLs. The "interim fix,
-not a fork" framing and the maintainer-relay policy explanation are both preserved as
-facts, only restated in shorter active sentences.

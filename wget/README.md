@@ -102,35 +102,3 @@ inherit `FUJIGET`'s own existing testing. But the team has not separately
 re-verified them through `WGET`'s prompt path. `WGET` is not part of the packaged
 release zip. Like `altairsim/`, `tnfsd-server-setup/`, and `fujinet-rs232/`, it is
 repo-only: get it straight from here.
-
----
-
-## What changed
-
-Full Simplified-Technical-English-style rewrite, not a light pass. Every fact,
-number, filename, command, code block, and link from the original is preserved
-exactly. Nothing was added or dropped.
-
-**Rule 2 (sentence limits).** The original runs long, comma-chained sentences
-covering several ideas at once (the CCP-uppercasing explanation, the deramp.com
-walkthrough, the directory-listing paragraph). Each was split into short,
-single-idea sentences, almost all under 20 words.
-
-**Rule 10 (em dashes).** Every em dash in the original was removed and replaced
-with a period or colon, depending on what it was doing in that sentence. None
-remain.
-
-**Rule 4 (active voice).** Passive or agentless constructions ("is a raw
-line-editing read," "confirmed live") were kept only where "the team" is the true,
-useful subject; added "the team" as the actor in several sentences that described
-a test someone actually ran (e.g. "The team confirmed this live against a real
-HTTPS server").
-
-**Rule 9 (word substitution).** *genuine* → *real* (both occurrences); *doesn't*,
-*don't*, *hasn't*, *haven't*, *that's*, *there's*, *isn't*, *you'd*, *you've* all
-expanded to their full forms.
-
-**Left alone.** Every code block, command example, file name, and the exact
-uppercased/mixed-case URL strings that are the whole point of the document are
-reproduced byte-for-byte. `case-folding` is kept as the project's own established
-term for the bug class, not touched. Section headings are unchanged.
