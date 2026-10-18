@@ -1,7 +1,7 @@
 # WGET: fetch a file through FujiNet's N: device, with the URL prompted at runtime
 
 ```
-WGET file.ext
+WGET file.ext [/O]
 URL: <typed or pasted here>
 ```
 
@@ -69,6 +69,36 @@ found). Nothing was saved.`; a `401` or `403` gives error 212; a `5xx` gives err
 after a clean end, so a failed fetch leaves an existing file as it was. Older WGET
 versions (v1.2 and before) did not check the code and saved the error page as the file.
 
+## Replacing a file without asking: `/O` (v1.4)
+
+If `file.ext` already exists, `WGET` asks `file.ext exists. Replace? (Y/N)` after it reads
+the URL. Add `/O` after the filename to replace the file without that question:
+
+```
+WGET FUJIDIR.ASM /O
+```
+
+`/O` is meant for scripts. A script cannot know ahead of time whether the question will
+come, so it cannot answer it. `/O` changes nothing else: the data still goes to the
+temporary `.$$$` file first, so a failed fetch with `/O` still leaves the old file as it
+was. `/O` must come after the filename. Anything else after the filename stops `WGET` with
+`WGET: the only switch is /O (replace without asking).`
+
+Use `EX.COM` to run such a script, not `SUBMIT` or `XSUB`. `SUBMIT` and `XSUB` uppercase
+every line, so the URL lines lose their case. With `/O`, each fetch is two lines, the
+command and the URL, whether or not the file is already on the disk:
+
+```
+WGET FUJIDIR.ASM /O
+https://raw.githubusercontent.com/trgeuy/fujinet-cpm22/main/FUJIDIR.ASM
+WGET FUJIGET.ASM /O
+https://raw.githubusercontent.com/trgeuy/fujinet-cpm22/main/FUJIGET.ASM
+WGET FUJIPUT.ASM /O
+https://raw.githubusercontent.com/trgeuy/fujinet-cpm22/main/FUJIPUT.ASM
+WGET WGET.ASM /O
+https://raw.githubusercontent.com/trgeuy/fujinet-cpm22/main/wget/WGET.ASM
+```
+
 ## Getting the URL: copy it from a browser, don't retype it
 
 The easiest way to keep the URL's case intact is to never type it by hand. Browse
@@ -98,7 +128,9 @@ assembles with CP/M's own `ASM`/`LOAD`; no cross-assembler is needed.
 
 The team built and verified `WGET` against the emulated `fujinet-pc-RS232` build
 on macOS, for HTTP and HTTPS. v1.3 was also tested on a real Altair 8800c with a
-real FujiNet RS232 adapter (2026-10-13): a mixed-case HTTP path, byte-exact. Other
+real FujiNet RS232 adapter (2026-10-13): a mixed-case HTTP path, byte-exact. v1.4's
+`/O` was tested (2026-10-18) in `altairsim` with a real FujiNet adapter on its serial port,
+over HTTPS: with and without `/O`, a new and an existing file, and a 404 with `/O`. Other
 schemes (TNFS, TCP) inherit `FUJIGET`'s own testing, but were not re-verified
 through `WGET`'s prompt path. `WGET` is not part of the packaged
 release zip. Like `altairsim/`, `tnfsd-server-setup/`, and `fujinet-rs232/`, it is
