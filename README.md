@@ -16,14 +16,14 @@ PCGET/PCPUT's serial-line approach generalizes to any CP/M machine, real or emul
 why FUJIGET/FUJIPUT follow that lineage instead.)
 
 ```
-FUJIGET N:<url> file.ext        pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
+FUJIGET N:<url> file.ext [/O]   pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 FUJIDIR N:<url>[pattern]        list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/*.COM
 ```
 
 Each tool has its own version number. Each tool changes on its own schedule, not together.
 Each tool prints its own version when you run it with no arguments. Current versions:
-`FUJIGET` v1.8, `FUJIPUT` v1.6, `FUJIDIR` v1.7.
+`FUJIGET` v1.9, `FUJIPUT` v1.6, `FUJIDIR` v1.7.
 
 FujiNet's protocol supports a delete/remove counterpart (`RMDIR`, file `DELETE`). This
 project deliberately does not include one. See "Known limitations" below.
@@ -295,7 +295,7 @@ boards).
 ### FUJIGET: pull a file down
 
 ```
-FUJIGET N:<url> file.ext
+FUJIGET N:<url> file.ext [/O]
 ```
 
 FUJIGET opens `<url>` for read on FujiNet's `N:` device. It writes the bytes into a new CP/M
@@ -307,6 +307,11 @@ deletes an existing local file of the same name.
 
 If `file.ext` already exists locally, FUJIGET asks `HELLO.TXT exists. Replace? (Y/N)` before
 touching the network side at all. Decline, and nothing happens, on either side.
+
+Since v1.9, `/O` after the filename replaces the file without that question, for scripts that
+cannot know whether it will come. The old file is still kept until a clean end of file (see
+"When a transfer fails" below), so a failed fetch with `/O` loses nothing. Anything else after
+the filename stops FUJIGET with `FUJIGET: the only switch is /O (replace without asking).`
 
 As of v1.4, FUJIGET prints `Received NNNN KB...` in place (overwriting itself, not scrolling)
 once every 1KB received. So a transfer that takes a while shows a visible sign of life

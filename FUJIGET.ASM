@@ -1,7 +1,7 @@
 ;-----------------------------------------------------------------------
-; FUJIGET.COM v1.8 -- fetch a file through FujiNet's N: network device.
+; FUJIGET.COM v1.9 -- fetch a file through FujiNet's N: network device.
 ;
-;       FUJIGET N:<url> file.ext        e.g.  FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
+;       FUJIGET N:<url> file.ext [/O]   e.g.  FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 ;
 ; Opens <url> for read on FujiNet's N: device, streams the bytes into a
 ; new CP/M file, closes both sides. The Nx: prefix and scheme (TCP://,
@@ -29,7 +29,8 @@
 ;
 ; If NAME already exists, CKEXIST asks "Replace? (Y/N)" before any of
 ; that -- SEARCH FIRST only reads the directory, so checking costs
-; nothing and can happen before the network side is even opened.
+; nothing and can happen before the network side is even opened. With
+; /O (v1.9) it does not ask.
 ;
 ; If the real OPEN fails, FujiNet's NAK carries no error detail at all
 ; (confirmed from firmware source -- see Reference/fujinet/rs232-
@@ -93,6 +94,13 @@
 ; refuses every listing) came out as "parent path does not exist". Any other
 ; answer, and older firmware (0CFH, not connected), keep the parent-directory
 ; guess below.
+;-----------------------------------------------------------------------
+; v1.9 (2026-10-18): FUJIGET N:<url> file.ext /O replaces an existing file
+; without asking. A script can't know ahead of time whether the "Replace?
+; (Y/N)" question will come, so it can't answer it (issue #2, the same
+; switch as WGET v1.4). The old file is still kept until a clean end of
+; file, so a failed fetch with /O loses nothing. Anything after the
+; filename other than /O is now an error instead of being ignored.
 ;
 ; AND BDOS CLOBBERS EVERY REGISTER (A,B,C,D,E,H,L -- only SP survives).
 ; Nothing may be left live in a register across CALL BDOS.
@@ -181,6 +189,7 @@ RXSIZE  EQU     MAXREAD+20      ; RXBUF: header + up to MAXREAD of payload
 START:  LXI     SP,STACK
         XRA     A
         STA     FMADE           ; no NAME.$$$ yet (DS memory is not zeroed)
+        STA     OVWR            ; v1.9: no /O unless PARSE finds one
 
         CALL    PARSE          ; tail -> SPEC (the url), NAME (the filename)
         LDA     SPEC
@@ -707,8 +716,12 @@ MKR3:   MOV     A,M
 ; continuing. SEARCH FIRST only reads the directory -- nothing is
 ; touched -- so this runs before the network side is even opened;
 ; declining costs nothing because nothing has happened yet.
+; v1.9: with /O (OVWR=1) there is no question at all.
 ;-----------------------------------------------------------------------
-CKEXIST:LXI     D,FCB
+CKEXIST:LDA     OVWR
+        ORA     A
+        RNZ                     ; /O -- replace without asking
+        LXI     D,FCB
         MVI     C,SFIRST
         CALL    BDOS
         CPI     0FFH
@@ -1129,6 +1142,38 @@ PARSE:  LXI     H,TAIL
         LXI     D,NAME
         MVI     C,NAMLEN
         CALL    TOKEN
+        LDA     NAME
+        CPI     '/'
+        JZ      USAGE           ; "FUJIGET N:<url> /O" -- no filename
+        JMP     GETSW
+
+;-----------------------------------------------------------------------
+; GETSW -- v1.9: whatever follows the filename, with HL and B where
+; TOKEN left them. Nothing: OVWR stays 0. /O and nothing after it:
+; OVWR=1. Anything else: EBADSW.
+;-----------------------------------------------------------------------
+GETSW:  CALL    SKIPSP
+        MOV     A,B
+        ORA     A
+        RZ                      ; nothing after the filename
+        MOV     A,M
+        CPI     '/'
+        JNZ     EBADSW
+        INX     H
+        DCR     B
+        JZ      EBADSW          ; a '/' on its own
+        MOV     A,M
+        ANI     5FH             ; fold lower-case to upper
+        CPI     'O'
+        JNZ     EBADSW
+        INX     H
+        DCR     B
+        CALL    SKIPSP
+        MOV     A,B
+        ORA     A
+        JNZ     EBADSW          ; something after the /O
+        MVI     A,1
+        STA     OVWR
         RET
 
 SKIPSP: MOV     A,B
@@ -1386,6 +1431,11 @@ USAGE:  LXI     D,MUSAGE
         CALL    BDOS
         JMP     0
 
+EBADSW: LXI     D,MEBADSW
+        MVI     C,PRSTR
+        CALL    BDOS
+        JMP     0
+
 ;=======================================================================
 ; DATA
 ;=======================================================================
@@ -1448,12 +1498,16 @@ MRECS:  DB      ' records received.',CR,LF,'$'
 MEXIST: DB      CR,LF,'FUJIGET: $'
 MEXIST2:DB      ' exists. Replace? (Y/N) $'
 MSKIP:  DB      CR,LF,'FUJIGET: not replaced.',CR,LF,'$'
+MEBADSW:DB      CR,LF,'FUJIGET: the only switch is /O (replace without'
+        DB      ' asking).',CR,LF,'$'
 MPROGP: DB      'Received $'
 MPROGS: DB      ' KB...$'
 
-MUSAGE: DB      CR,LF,'FUJIGET v1.8 -- fetch a file through FujiNet''s'
+MUSAGE: DB      CR,LF,'FUJIGET v1.9 -- fetch a file through FujiNet''s'
         DB      ' N: network device.',CR,LF,CR,LF
-        DB      '   FUJIGET N:<url> file.ext',CR,LF,CR,LF
+        DB      '   FUJIGET N:<url> file.ext [/O]',CR,LF,CR,LF
+        DB      '/O replaces file.ext without asking, if it exists.'
+        DB      CR,LF,CR,LF
         DB      'Example',CR,LF
         DB      '   FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT',CR,LF,'$'
 
@@ -1478,6 +1532,7 @@ TFCB:   DS      36              ; v1.7: NAME.$$$, where the data goes
 RENFCB: DS      36              ; v1.7: BDOS 23's old+new name pair
 FMADE:  DS      1               ; v1.7: 1 while NAME.$$$ exists
 ERRCD:  DS      1               ; v1.7: the STATUS error code ENERR prints
+OVWR:   DS      1               ; v1.9: 1 for /O -- no Replace? question
 RXLEN:  DS      2               ; v1.7: the last reply's length
 RXCK:   DS      1               ; v1.7: its checksum byte, while checking
 BUF:    DS      RECLEN
