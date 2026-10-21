@@ -1,9 +1,10 @@
 # FujiNet for CP/M on altairsim
 
-Three small CP/M utilities give a CP/M machine access to FujiNet's `N:` network device. The
-machine must run under [`altairsim`](https://github.com/deltecent/altairsim). The tools
-transfer files and list directories over TCP, HTTP, TNFS, and any other protocol that
-FujiNet's network layer understands.
+Four small CP/M utilities give a CP/M machine access to FujiNet. The
+machine must run under [`altairsim`](https://github.com/deltecent/altairsim). Three tools use
+FujiNet's `N:` network device. They transfer files and list directories over TCP, HTTP, TNFS,
+and any other protocol that FujiNet's network layer understands. The fourth, `FUJITYPE`,
+prints a text file on FujiNet's printer.
 
 The tools are modeled on Mike Douglas's classic
 [`PCGET`/`PCPUT`](https://deramp.com/downloads/altair/software/utilities/PCGET%20and%20PCPUT/).
@@ -19,16 +20,17 @@ why FUJIGET/FUJIPUT follow that lineage instead.)
 FUJIGET N:<url> file.ext [/O]   pull a file down, e.g. FUJIGET N1:TNFS://192.168.1.5/HELLO.TXT HELLO.TXT
 FUJIPUT file.ext N:<url> [B|T]  push a file up,    e.g. FUJIPUT HELLO.TXT N1:TNFS://192.168.1.5/HELLO.TXT T
 FUJIDIR N:<url>[pattern]        list a directory,  e.g. FUJIDIR N1:TNFS://192.168.1.5/*.COM
+FUJITYPE file.ext               print a text file, e.g. FUJITYPE NOTES.TXT
 ```
 
 Each tool has its own version number. Each tool changes on its own schedule, not together.
 Each tool prints its own version when you run it with no arguments. Current versions:
-`FUJIGET` v1.9, `FUJIPUT` v1.6, `FUJIDIR` v1.7.
+`FUJIGET` v1.9, `FUJIPUT` v1.6, `FUJIDIR` v1.7, `FUJITYPE` v1.0.
 
 FujiNet's protocol supports a delete/remove counterpart (`RMDIR`, file `DELETE`). This
 project deliberately does not include one. See "Known limitations" below.
 
-This folder has all three programs ready to run (`.COM`) and their assembly source (`.ASM`).
+This folder has all four programs ready to run (`.COM`) and their assembly source (`.ASM`).
 This project uses no cross-assembler anywhere. CP/M's own `ASM.COM`/`LOAD.COM` built these
 tools, running inside the emulated machine.
 
@@ -56,10 +58,10 @@ serial-baud setup happen entirely through the adapter's own `fnconfig.ini` and w
 CP/M has no `CONFIG.SYS`/`CONFIG.EXE` equivalent. It is repo-only, for the same reason as the
 other two. See <https://github.com/trgeuy/fujinet-cpm22/tree/main/fujinet-rs232>.
 
-`wget/` is a fourth tool, `WGET`. It prompts for its URL at runtime instead of taking it on the
+`wget/` has one more network tool, `WGET`. It prompts for its URL at runtime instead of taking it on the
 command line. CP/M's CCP uppercases the whole command tail before any program sees it. This
 silently breaks a `FUJIGET`/`FUJIPUT`/`FUJIDIR` URL against a case-sensitive remote like a real
-HTTP/HTTPS server. It is repo-only, for the same reason as the other three. See
+HTTP/HTTPS server. It is repo-only, for the same reason as the folders above. See
 <https://github.com/trgeuy/fujinet-cpm22/tree/main/wget>.
 
 `cpm-tnfsd/` is `TNFSD`, a TNFS server that runs on CP/M itself. Another machine with a
@@ -82,7 +84,7 @@ verified end to end against a TNFS server running on actual Raspberry Pi hardwar
 LAN. This includes the mixed read-only/write-only permission layout described in
 `tnfsd-server-setup/`. **All three tools have also now been verified on a real physical
 FujiNet RS232 adapter on a real Altair 8800c.** See `fujinet-rs232/` for bring-up
-instructions. **All four tools also run on a non-Altair machine**: a CompuPro Interfacer 1 in
+instructions. **FUJIGET, FUJIPUT, FUJIDIR and WGET also run on a non-Altair machine**: a CompuPro Interfacer 1 in
 a Z80 system, changed as described in [section 5](#5-adapting-to-different-hardware).
 **Windows/Linux instructions for the emulator host side (FujiNet-PC) are not
 written yet.** This project has only run FujiNet-PC on macOS so far. That is the one
@@ -217,7 +219,7 @@ port = 10
 
 (`port = 10` is the 2SIO's usual base address. If yours is elsewhere, or you have more than
 one 2SIO, adjust `id`/`port` and the board id you reference below to match. Whatever board id
-you give this card is also the id the four programs need to know about. If you move the card
+you give this card is also the id the programs need to know about. If you move the card
 to other ports, the programs need the new port addresses; see
 [section 5](#5-adapting-to-different-hardware).)
 
@@ -240,10 +242,10 @@ whatever transfer method your setup already has.
 Bridge tools `R`, `W`, and `HDIR`. `R` copies a file from your host into CP/M. It reads from the
 folder you started `altairsim` in (`altairsim/`, if you followed its README).
 
-1. Copy `FUJIGET.COM`, `FUJIPUT.COM`, and `FUJIDIR.COM` from the top of this repo into
-   `altairsim/`.
+1. Copy `FUJIGET.COM`, `FUJIPUT.COM`, `FUJIDIR.COM`, and `FUJITYPE.COM` from the top of this
+   repo into `altairsim/`.
 2. At the CP/M prompt, type `R FUJIGET.COM`. `R` copies the file and reports its size.
-3. Repeat for `FUJIPUT.COM` and `FUJIDIR.COM`. `HDIR` lists the host files that `R` can see.
+3. Repeat for `FUJIPUT.COM`, `FUJIDIR.COM`, and `FUJITYPE.COM`. `HDIR` lists the host files that `R` can see.
 
 Then skip to "Using the tools" below. Any other way to get a file from your host onto the CP/M
 disk also works, for example a disk image you can mount on the host.
@@ -261,7 +263,7 @@ CP/M 2.2 system:
    terminals set), then send `FUJIGET.HEX` as plain ASCII text. When it is done, type Ctrl-Z
    to signal end-of-file. PIP returns to the prompt.
 3. Type `A>LOAD FUJIGET`. This reads `FUJIGET.HEX` and writes `FUJIGET.COM`, ready to run.
-4. Repeat for `FUJIPUT.HEX` and `FUJIDIR.HEX` (or skip whichever you do not need). If you also
+4. Repeat for `FUJIPUT.HEX`, `FUJIDIR.HEX`, and `FUJITYPE.HEX` (or skip whichever you do not need). If you also
    want the `testing/NC.COM` diagnostic tool, its `.HEX` works the same way.
 
 **To rebuild from source** instead of using the provided `.HEX`/`.COM`: get the `.ASM` onto
@@ -454,9 +456,41 @@ If the open fails, FUJIDIR reports `not found on that remote server` (the parent
 the target does not) or `failed -- parent path does not exist` (same best-effort diagnosis as
 FUJIGET, for the same reason; see that section above).
 
+### FUJITYPE: print a text file
+
+```
+FUJITYPE NOTES.TXT
+```
+
+`FUJITYPE` is the paper copy of `TYPE`: the printout has the text that `TYPE NOTES.TXT` shows.
+It sends the file to FujiNet's printer device. FujiNet keeps the printout as a document.
+
+1. Set the printer to Yes in the FujiNet web page. A disabled printer does not reply, so
+   `FUJITYPE` waits about 20 seconds and then says that nothing was printed.
+2. Set the printer type. Epson 80 (type 12) makes a PDF. The default file printer makes a text
+   file.
+3. Run `FUJITYPE` with the name of a text file.
+4. Open `/print` on the FujiNet web page to get the printout. The page gives each printout
+   once.
+
+Every download has the name `printout.pdf`. Rename each printout after you download it: some
+browsers replace the previous file with the same name.
+
+`FUJITYPE` stops at the first `^Z`, as `TYPE` does. It expands a TAB to the next column of 8.
+A line longer than 80 characters goes on to the next printed line. No character is lost.
+
+`FUJITYPE` sends one printed line in each packet. This is the workaround for
+[fujinet-firmware#2043](https://github.com/FujiNetWIFI/fujinet-firmware/issues/2043): the PDF
+printers start a new page only between two packets. See the printer section of
+`docs/rs232-protocol.md` and chapter 11 of the RS-232 FujiNet User's Manual.
+
+Claude Code wrote `FUJITYPE` in one session, in part 8 of the
+[altairsim video series](https://youtu.be/5h-7r_IAMIU). It was tested on FujiNet-PC and on a
+real FujiNet RS232 adapter on a real Altair 8800c.
+
 ### If FujiNet-PC never answers at all
 
-All three tools now give up after a bounded wait, rather than hanging forever, if nothing
+The tools now give up after a bounded wait, rather than hanging forever, if nothing
 comes back: `<TOOL>: destination server not responding.` This covers FujiNet-PC itself going
 unreachable (crashed, or its own connect attempt to a dead remote hanging indefinitely), not a
 normal ACK/NAK reply. The wait is a busy-wait loop, not a real timer (CP/M 2.2 has no
@@ -504,7 +538,7 @@ I/O ports directly, so a different serial board needs changes in the source:
 
 [`docs/adapting-to-hardware.md`](docs/adapting-to-hardware.md) gives the full instructions, a
 list of every place to change in each file, and a worked example: a CompuPro Interfacer 1 in a
-Z80 system, with all four tools tested on the real machine.
+Z80 system, with FUJIGET, FUJIPUT, FUJIDIR and WGET tested on the real machine.
 
 ---
 
@@ -534,7 +568,7 @@ paths unreachable.
 
 ## Known limitations
 
-- **A failed open is partly diagnosed by inference.** FUJIGET (v1.8) and FUJIPUT (v1.6) first
+- **A failed open is partly diagnosed by inference.** FUJIGET (v1.8 on) and FUJIPUT (v1.6 on) first
   ask FujiNet for the reason, which firmware from 2026-09-27 on keeps. Otherwise, and in
   FUJIDIR, the messages "not found," "denied" and "parent path does not exist" are inferred,
   not server-reported: each tool probes the parent directory and guesses from that. A strong
@@ -556,7 +590,7 @@ paths unreachable.
 - **Disk mounting** (`FUJICMD_MOUNT_HOST`/`MOUNT_IMAGE`, i.e. making a remote disk image appear
   as a real CP/M drive letter) is not implemented and not planned for now. It would need a new
   CP/M BIOS driver speaking a completely separate, Atari-SIO-flavored sector protocol
-  (`DISKCMD_*`): a much bigger undertaking than these four utilities, and untested at the
+  (`DISKCMD_*`): a much bigger undertaking than these utilities, and untested at the
   protocol level besides. The simple workaround already available: `FUJIGET` a `.DSK` image
   down to the host machine, then point `altairsim`'s own disk board at it directly.
 - **Windows and Linux instructions for FujiNet-PC** are not written yet (see the top of this

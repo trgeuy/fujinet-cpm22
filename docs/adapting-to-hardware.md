@@ -19,6 +19,7 @@ each `.ASM` file has its own copy of the port settings. Change every file that y
 | `FUJIGET.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
 | `FUJIPUT.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
 | `FUJIDIR.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
+| `FUJITYPE.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
 | `wget/WGET.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
 | `cpm-tnfsd/TNFSD.ASM` | yes | yes | `SENDPK`, `RPWAIT`, `AI1`, `AO1`, `ACIN` |
 | `testing/NC.ASM` | yes | yes | `AO1`, `ACIN` |

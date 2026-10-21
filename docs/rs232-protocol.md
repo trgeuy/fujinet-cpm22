@@ -335,49 +335,58 @@ payload is the firmware's packed `AdapterConfig` struct
 
 ## Verified live (2026-10-17): the printer device (`0x40`) prints text that you send with `W`
 
-FujiNet has a virtual printer. A CP/M program sends it text, and FujiNet makes a document
-that you get from its web page. A test program sent one 582-byte page in 128-byte packets.
-It passed on FujiNet-PC (under altairsim) and on the real RS232 adapter. Source:
-`lib/device/rs232/printer.cpp`, firmware `5674a0135`.
+The RS-232 FujiNet User's Manual (first edition, 2026), chapter 11, describes the printer
+device. It gives the `PRINTER_WRITE` command (`0x57`, `'W'`), the limit of 255 bytes for each
+`W`, the other printer commands and the printer types. This section gives only what the manual
+does not say, and what we found in our own tests. `FUJITYPE` uses all of it.
 
-**The command.** Send `PRINTER_WRITE` (`0x57`, `'W'`) to device `0x40`. Use descriptor `0`
-(no parameters). The payload is the text. FujiNet replies with an ACK and no payload. There
-is no open, no close and no URL. Each `W` adds its text to the current document.
+**Our tests.** A test program sent one 582-byte page in 128-byte packets. It passed on
+FujiNet-PC (under altairsim) and on the real RS232 adapter. Source:
+`lib/device/rs232/printer.cpp`, firmware `5674a0135`. Then `FUJITYPE` printed files of many
+pages on both (2026-10-18).
 
-**Keep each `W` at 128 bytes or less.** `rs232_write()` copies the payload into a 320-byte
-buffer and does not check the length. It then gives the length to `process()` as a
-`uint8_t`, so a payload longer than 255 bytes loses its length. One CP/M record (128 bytes)
-for each `W` is safe. We did not test a longer payload.
+**Send descriptor `0`.** `W` has no parameters. The payload is the text. FujiNet replies with
+an ACK and no payload. There is no open, no close and no URL. Each `W` adds its text to the
+current document.
 
-**A disabled printer sends no reply.** If the printer is off in the WebUI, `rs232_process()`
-writes `disabled, ignoring` to the log and sends nothing. It does not send a NAK. So a
-timeout is the only symptom. Tell the user to set the printer to Yes in the WebUI. On the RS232
-build, the printer is on by default (`fnConfig.h`). Our real adapter had it off.
+**A disabled printer sends no reply.** It does not send a NAK, so a timeout is the only
+symptom. Our real adapter had the printer off. Tell the user to set the printer to Yes in the
+WebUI. On the RS232 build, the printer is on by default (`fnConfig.h`).
 
-**Other printer commands.** `PRINTER_STATUS` (`0x53`, `'S'`) needs one 1-byte parameter. With
-no parameter, it gives a NAK. It returns 4 Atari-style status bytes. `PRINTER_PUT` (`0x50`,
-`'P'`) does the same as `W`. We did not use either command.
+**Known issue: a line can print below the bottom of the page
+([fujinet-firmware#2043](https://github.com/FujiNetWIFI/fujinet-firmware/issues/2043)).** The
+PDF printers (Epson 80 and the others) start a new page only between two `W` packets, never
+inside one. So a packet with several lines can print past the end of the page. The fix
+([#2070](https://github.com/FujiNetWIFI/fujinet-firmware/pull/2070)) is merged. Until a
+firmware release includes it, use this workaround:
 
-**The printer type sets the output.** Set the type in the WebUI, or with `type=` in the
-`[Printer1]` section of `fnconfig.ini`.
+1. Send one printed line in each `W`.
+2. If a line is longer than 80 characters, send CR LF after each 80 characters. Print the rest
+   on the next line.
+
+The 80 is the width of the Epson 80. The workaround is also correct on fixed firmware.
+
+**What each printer type does with CP/M text.** Set the type in the WebUI, or with `type=` in
+the `[Printer1]` section of `fnconfig.ini`.
 
 | Type | Output |
 |---|---|
 | File printer (TRIM), the default | The bytes as sent, CR/LF kept. `^Z` padding is printed too. |
 | File printer (ASCII) | CR/LF removed. Not useful for CP/M text. |
-| Epson 80 (type 12) | A PDF that looks like dot-matrix output: 80 columns, 64 lines on each page. A long line wraps after column 80. A form feed starts a new page. `^Z` does not show. |
+| Epson 80 (type 12) | A PDF that looks like dot-matrix output: 80 columns, 64 lines on each page. A form feed starts a new page. `^Z` does not show. |
 
 A CP/M text file ends with `^Z` (`1AH`) and is padded to a full record. Stop at the first
 `1AH`. Do not send the padding.
 
 **Get the document.** Open `/print` on the WebUI of the adapter, for example
-`http://192.168.123.30/print`. On FujiNet-PC, use the address that you gave with `-u`. The
-page returns the document and closes it. The next `W` starts a new document. The printer is
-busy until 2 seconds after the last `W` (`PRINTER_BUSY_TIME`, `lib/http/httpService.h`).
+`http://192.168.123.30/print`. On FujiNet-PC, use the address that you gave with `-u`.
 
-**Where the file goes.** The adapter keeps the document on its SD card. Without an SD card,
-the source puts it in internal flash (`src/main.cpp`). We did not test a board without an SD
-card.
+- `/print` gives the document once and closes it. A second request gives
+  `400 Error opening file`. The next `W` starts a new document.
+- The printer is busy until 2 seconds after the last `W` (`PRINTER_BUSY_TIME`,
+  `lib/http/httpService.h`).
+- Every download has the name `printout.pdf`. Safari replaces the previous file with that name.
+  Chrome and Edge add a number. Rename each printout after you download it.
 
 ## Remaining gap
 
